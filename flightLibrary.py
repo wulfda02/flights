@@ -629,7 +629,133 @@ class fitter(object): # Details of fitting stored here
     def storeParams(self):
         self.paramsObj.sort()
         return self.paramsObj.storeParams()
-              
+        
+class cardData(object):
+    """Provide transparent access to the binary decoded 6 pixel per file card-file data"""
+    pixelsPerGroup = 6
+    pixelGroup = ['a1', 'b1', 'a2', 'b2', 'a3', 'b3'] # Needs to be ordered in pixel number
+    dataType = 'short' 
+    def __init__(self, run):
+        '''Instantiate the CardFileData object
+        Example: cfd = CardFileData('k8r61')'''
+        self.run = run
+        self._currentFileName = None
+        self.fileNameTemplate = self.run + '%s.le.dat' 
+        self.groupPixel = {}   # Create reverse dictionary
+        pixel = 0 
+        for group in self.pixelGroup: 
+            self.groupPixel[group] = pixel 
+            pixel = pixel + self.pixelsPerGroup
+    def fileNameForPixel(self, pixel, fileNameTemplate=None):
+        '''Return the appropriate filename for the specified pixel.
+        Specify fileNameTemplate if you don't like the default.'''
+        i = int(pixel / self.pixelsPerGroup) # Number 0-5 that determines which pixel group the pixel belongs to, e.g. pixel 13  returns i=2
+        group = self.pixelGroup[i] # Name of pixel group, e.g. i=2 returns group='a2'
+        index = pixel - self.groupPixel[group] # Location 0-5 of pixel within pixel group, e.g. pixel 13 returns index=1 within group 'a2'
+        if fileNameTemplate is None:
+            fileNameTemplate = self.fileNameTemplate # I.e. fileNameTemplate = run + '%s.le.dat'
+        fileName = fileNameTemplate % group # Replaces '%s' in previous line with group, e.g. pixel 13 may have file name 'k8r61a2.le.dat'
+        return (fileName, index)
+    def pixelNumberForFileName(self, filename, index=0):
+        '''Figure out the number-ids of the pixels stored in a certain file. Should rarely be needed, but it's there if you care.'''
+        group = filename[5:7].lower()
+        try:
+            pixel = self.groupPixel[group]
+        except KeyError:
+            raise 'Unknown group %s in filename %s' % (group, filename)
+        return pixel + index
+    def loadData(self, fileName):
+        A = np.fromfile(fileName, dtype=self.dataType, sep='')
+        nSamples = len(A) / self.pixelsPerGroup
+        print "Found %d samples each for %d pixels." % (nSamples, self.pixelsPerGroup)
+        extra = len(A) % self.pixelsPerGroup  # Check if there are extra datapoints, i.e len(A) not evenly divisible by 6
+        if  extra > 0: # This should not normally happen
+            print "%s contains extra %d datapoints" % (fileName, extra)
+        self._D = A.reshape((self.pixelsPerGroup, nSamples),order='F') # Create 6 x nSamples array using Fortran-like index order
+        self._currentFileName = fileName
+    def pixelData(self, pixel):
+        '''Return the pixel data for specified pixel. Will go out and try to read the appropriate file if needed (simple caching implemented.'''
+        fn, index = self.fileNameForPixel(pixel)
+        if fn != self._currentFileName:
+            self.loadData(fn) # Update file being accessed, if necessary
+        return self._D[index, :] # Returns data column for pixel, i.e. 1 x nSamples array 
+    def writePixelData(self, pixel):
+        '''Write pixel data to bsn file'''
+        d = self.pixelData(pixel)
+        if self.run=='h6r19':
+            d = d[35338593:68672680] # T = [-2000,1200]
+        elif self.run=='j5r62':
+            d = d[17343736:53802857] # T = [-2000,1500]
+        if len(d)>0:
+            median1 = np.median(d) 
+            i = np.abs(d - median1) < 100 
+            median2 = np.median(d[i])  
+            mean = np.mean(d[i]) 
+            baseline = int(np.around(np.mean([median2, mean])))
+            d = (d-baseline).astype(np.int16) 
+            pixelObj = singlePixel(self.run,pixel) # Instance of SinglePixelData class with parameters corresponding to pixel and run 
+            pixelObj.setData(d) 
+            fn = pixelObj.writeToHdf('bsn',dtype=np.int16) # Write d2 data to bsn.hdf5 file and return the file name 
+            print "Pixel %d written to: %s" % (pixel,fn)
+    def writeAllPixels(self):
+        for i in range(36):
+            self.writePixelData(i)
+            
+class groupTiming(object):
+    def __init__(self, run):
+        self._run = run
+        self._sampleRates = np.zeros(6)
+        self._T0Samples = np.zeros(6)
+    def groupForPixel(self, pixel):
+        return pixel//6
+    def propagateTiming(self):
+        for pixel in set(range(36)).difference([19]):
+            pxlObj = singlePixel(self._run,pixel)
+            pxlObj.loadFromHdf('bsn')
+            fs = self._sampleRates[self.groupForPixel(pixel)]
+            T0Sample = self._T0Samples[self.groupForPixel(pixel)]
+            pxlObj.setSampleRate(fs)
+            pxlObj.setT0Sample(T0Sample)
+            pxlObj.writeHdfTiming('bsn')
+    def correctedFlightTiming(self): # Only for k8r61
+        self.findBiasToggles()
+        # The flight timer is actually 82.9E-6 ppm slow
+        flightTimerSpeedup = -82.9E-6
+        flightTimerSpeed = 1+flightTimerSpeedup
+        flightTimerT0 = 0.21446667
+        eventTimes = (np.array([114.0, 117.0, 268.2, 271.2, 426.0, 429.0])/flightTimerSpeed+flightTimerT0)
+        nGroups = 6
+        nEvents = self._toggleTable.shape[1]-1
+        tmean = np.zeros((nGroups,nEvents), dtype=float)
+        print "CF group # \t fs [Hz] \t T0Sample "  # For Wiki
+        for group in range(nGroups): # Walk through the pixel groups
+            for i in range(nEvents):
+                ts = self._toggleTable[group*6:group*6+6,1+i]
+                good = ts > 0
+                tmean[group, i] = np.mean(ts[good])
+            x = eventTimes
+            y = tmean[group,:]
+            fit = np.polyfit(x,y,1)
+            self._sampleRates[group] = fit[0]
+            self._T0Samples[group] = int(round(fit[1]))
+            print '%d \t\t %8.5f \t %d' % (group, fit[0], int(round(fit[1])))
+        self.propagateTiming()
+    def findBiasToggles(self):
+        print "Finding Bias Toggles..."
+        maxToggles = 3
+        self._toggleTable = np.zeros((36,1+maxToggles*2), dtype=int)
+        for pixel in set(range(36)).difference([19]):
+            pxlObj = singlePixel(self._run,pixel)
+            pxlObj.loadFromHdf('bsn')
+            dt = pxlObj.dt()
+            toggles = findBiasToggle(pxlObj.data(), -3.0, 2E-3, dt)
+            self._toggleTable[pixel,0] = pixel
+            for i, toggle in enumerate(toggles):
+                iOff = toggle[0]
+                iOn = toggle[1]
+                self._toggleTable[pixel,1+i*2] = iOff
+                self._toggleTable[pixel,2+i*2] = iOn
+    
 class singlePixel(object):
     def __init__(self,run,pixel,interactive=True):
         self.run = run
@@ -668,6 +794,8 @@ class singlePixel(object):
         self._mask = mask
     def mask(self):
         return self._mask
+    def data(self):
+        return self._data
     def pulses(self):
         return self._pulses
     def fileName(self, suffix):
@@ -706,6 +834,17 @@ class singlePixel(object):
         if 'eventList' in group.keys():
             self.setPulses(np.copy(group['eventList']))
         f.close()
+    def writeToHdf(self, suffix, dtype=None): # intended for writng file for the first time.  Will encounter error if pixel already exists
+        fn = self.fileName('%s.hdf5' % suffix)
+        f = h5py.File(fn,'a') 
+        group = f.create_group('p%02d' % self.pixel)
+        group.attrs.create('run', self.run)
+        group.attrs.create('pixel', self.pixel)
+        if dtype == None:  # Use whatever native dtype is happening
+            group.create_dataset('data', data=self._data)
+        else:
+            group.create_dataset('data', data=self._data, dtype=dtype)
+        return fn
     def writeHdfTiming(self, suffix): # intednded to modify existing file
         fn = self.fileName('%s.hdf5' % suffix)
         f = h5py.File(fn,'r+')
@@ -868,13 +1007,37 @@ class singlePixel(object):
         goodCals = selectCals(calData,signalLoc,filterLength,self.sampleRate(),self.interactive)
         self.setAvgPulse(avgSignal(calData,goodCals,filterLength))
         self.setNoise2(avgNoise(calData,noiseLoc,filterLength,self.sampleRate()))
+    def filterFromFits(self,fitsFilterFileName):
+        if os.path.isfile(fitsFilterFileName):
+            filterFile = fits.open(fitsFilterFileName)
+            try:
+                avgPulseHDU = filterFile['AvgPulse_t']
+                pixelIndex = avgPulseHDU.data['Pixel']==self.pixel
+                noise2HDU = filterFile['Noise**2']
+                pixelIndex = noise2HDU.data['Pixel']==self.pixel 
+                self.setAvgPulse(avgPulseHDU.data['signal'][pixelIndex][0])
+                self.setNoise2(noise2HDU.data['Noise'][pixelIndex][0])
+            except IndexError:
+                print "Filter Information Not In %s" % fitsFilterFileName
     def getFilter(self):
         useExisting = True
         defaultLength = True
         filterLength = 4096
         if self.haveFilter() and self.interactive:
             print "Filter Information Already In .bsn File"
-            useExisting = not raw_input("Use existing? (Y/n):")[:1].lower()=='n'           
+            useExisting = not raw_input("Use existing? (Y/n):")[:1].lower()=='n'   
+        if (not self.haveFilter())or(not useExisting):
+            if self.run=='k8r61':
+                if self.interactive:
+                    useFits = not raw_input("Use .fits file for filter? (Y/n)")[:1].lower()=='n'
+                if useFits:
+                    if self.pixel!=18:
+                        fitsFilterFile = 'k8O61_fil.fits'
+                    else:
+                        fitsFilterFile = 'k8F61_fil.fits'
+                    self.filterFromFits(fitsFilterFile)
+                    if self.haveFilter():
+                        useExisting = True
         if ((not self.haveFilter())or(not useExisting))and(self.haveData()):
             if self.interactive:
                 defaultLength = not raw_input("Use default filter length of %d? (Y/n):" % filterLength)[:1].lower()=='n'
@@ -1103,6 +1266,62 @@ class spectralLines(object):
 # These are all needed for the above classes
 # Be careful changing these, since they may be called by multiple subroutines 
 ##############################################################################
+def clusterIndicesToSpans(indices, maxDelta):
+    clusters = []
+    if len(indices) < 1:
+        return []
+    z = indices[0]
+    group = [z]
+    i = 1
+    while i < len(indices):
+        znew =indices[i]
+        if znew < z+maxDelta:
+            group.append(znew)
+        else:
+            clusters.append((group[0],group[-1]))
+            group = [znew]
+        z = znew
+        i += 1
+    clusters.append((group[0],group[-1]))
+    return clusters
+
+def findBiasToggle(y, DeltaT, maxJitter, dt, quietTime=0.03):
+    dy = np.diff(y)
+    posThreshold = 500
+    negThreshold = -500
+    # Look for possible bias on transitions
+    candidates = np.where(dy>posThreshold)[0]
+    spans = clusterIndicesToSpans(candidates, 5)
+    di = int(0.5*maxJitter/dt)
+    diQuiet = int(quietTime/dt)
+    notQuietAfterOn = 0
+    biasToggles = []
+    for span in spans:  # Try to pair each one up with a bias off transition
+        iOn = span[0] + np.argmax(dy[span[0]:span[1]+1]) # Location of maximum dy/dt
+        # See if the signal is quiet before bias on
+        iOnQuietStop = iOn+diQuiet
+        if iOnQuietStop > len(dy):
+            continue
+        maxdyOn = np.max(np.abs(dy[iOn+5:iOnQuietStop]))
+        if maxdyOn > 5:
+            notQuietAfterOn += 1
+            continue
+        i1 = iOn+int(((DeltaT-0.5*maxJitter)/dt)) # A window where the other transition might be
+        i2 = i1+2*di
+        i1,i2 = sorted((i1,i2))
+        if i1 < 0 or i2 > len(dy): # If it's outside the data range
+            continue
+        candidates = i1+np.where(dy[i1:i2] < negThreshold)[0]
+        spans2 = clusterIndicesToSpans(candidates, 5)
+        for span2 in spans2:
+            iOff = span2[0] + np.argmin(dy[span2[0]:span2[1]+1])
+            # See if signal is quiet after bias off
+            maxdyOff = np.max(np.abs(dy[iOff+5:iOff+5+diQuiet]))
+            if maxdyOff <= 10:
+                biasToggles.append((iOff,iOn))
+                break # Only one off per bias on
+    return biasToggles
+
 def fitPolyBkwd(B,x):
     func = np.zeros(len(x))
     for i in range(len(B)):

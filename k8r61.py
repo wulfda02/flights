@@ -4,7 +4,7 @@ Created on Fri Nov  3 20:13:28 2017
 @author: dwulf
 """
 
-import filterLibrary as fl
+import flightLibrary as fl
 import warnings
 import sys
 import os
@@ -34,9 +34,9 @@ else:
     print "pixel 0-35 (-1 for batch mode [default])"
     print "autoflag 0 for single pixel interactive"
     print "autoFlag 1 for otherwise"
-    run = 'l5r40'
-    pixel = 6
-    autoFlag = 1
+    run = 'k8r61'
+    pixel = 0
+    autoFlag = 0
     #sys.exit()
     
 if pixel<0:
@@ -45,18 +45,24 @@ else:
     pixels = [pixel]
 interactive = not autoFlag
 
+# Make bsn file from card data if not already done
+# Also get timing
+fn = "%s.bsn.hdf5" % run
+if not os.path.isfile(fn):
+    print "Making bsn file..."
+    cardData = fl.cardData(run)
+    cardData.writeAllPixels()
+    print "Getting timing from bias toggles..."
+    timing = fl.groupTiming(run)
+    timing.correctedFlightTiming()
+    
+
 for pixel in pixels:
     print run, pixel
 
     # Load data for pixel from hdf5 file
     pxlObj = fl.singlePixel(run,pixel,interactive)
     pxlObj.loadFromHdf('bsn')
-    if not pxlObj.haveData():
-        print "Bad Pixel: No Data"
-        continue
-    
-    # Get timing information from swp file
-    pxlObj.getTiming()
     
     # Make optimum filters
     filters = pxlObj.getFilter()
