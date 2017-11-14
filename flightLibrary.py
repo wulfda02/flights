@@ -1022,6 +1022,7 @@ class singlePixel(object):
     def getFilter(self):
         useExisting = True
         defaultLength = True
+        useFits = True
         filterLength = 4096
         if self.haveFilter() and self.interactive:
             print "Filter Information Already In .bsn File"
