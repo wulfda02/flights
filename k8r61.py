@@ -40,7 +40,7 @@ else:
     #sys.exit()
     
 if pixel<0:
-    pixels = range(35)
+    pixels = range(36)
 else:
     pixels = [pixel]
 interactive = not autoFlag
