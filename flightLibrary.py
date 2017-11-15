@@ -640,7 +640,7 @@ class cardData(object):
         Example: cfd = CardFileData('k8r61')'''
         self.run = run
         self._currentFileName = None
-        self.fileNameTemplate = self.run + '%s.le.dat' 
+        self.fileNameTemplate = 'data/%s%%s.le.dat' % self.run 
         self.groupPixel = {}   # Create reverse dictionary
         pixel = 0 
         for group in self.pixelGroup: 
@@ -667,7 +667,7 @@ class cardData(object):
     def loadData(self, fileName):
         A = np.fromfile(fileName, dtype=self.dataType, sep='')
         nSamples = len(A) / self.pixelsPerGroup
-        print "Found %d samples each for %d pixels." % (nSamples, self.pixelsPerGroup)
+        print "%s %d samples each for %d pixels." % (fileName, nSamples, self.pixelsPerGroup)
         extra = len(A) % self.pixelsPerGroup  # Check if there are extra datapoints, i.e len(A) not evenly divisible by 6
         if  extra > 0: # This should not normally happen
             print "%s contains extra %d datapoints" % (fileName, extra)
@@ -695,8 +695,7 @@ class cardData(object):
             d = (d-baseline).astype(np.int16) 
             pixelObj = singlePixel(self.run,pixel) # Instance of SinglePixelData class with parameters corresponding to pixel and run 
             pixelObj.setData(d) 
-            fn = pixelObj.writeToHdf('bsn',dtype=np.int16) # Write d2 data to bsn.hdf5 file and return the file name 
-            print "Pixel %d written to: %s" % (pixel,fn)
+            pixelObj.writeToHdf('bsn',dtype=np.int16) # Write d2 data to bsn.hdf5 file and return the file name 
     def writeAllPixels(self):
         for i in range(36):
             self.writePixelData(i)
@@ -1033,9 +1032,9 @@ class singlePixel(object):
                     useFits = not raw_input("Use .fits file for filter? (Y/n)")[:1].lower()=='n'
                 if useFits:
                     if self.pixel!=18:
-                        fitsFilterFile = 'k8O61_fil.fits'
+                        fitsFilterFile = 'data/k8O61_fil.fits'
                     else:
-                        fitsFilterFile = 'k8F61_fil.fits'
+                        fitsFilterFile = 'data/k8F61_fil.fits'
                     self.filterFromFits(fitsFilterFile)
                     if self.haveFilter():
                         useExisting = True
