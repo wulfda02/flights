@@ -708,7 +708,7 @@ class groupTiming(object):
     def groupForPixel(self, pixel):
         return pixel//6
     def propagateTiming(self):
-        for pixel in set(range(36)).difference([19]):
+        for pixel in range(36):
             pxlObj = singlePixel(self._run,pixel)
             pxlObj.loadFromHdf('bsn')
             fs = self._sampleRates[self.groupForPixel(pixel)]
@@ -754,9 +754,179 @@ class groupTiming(object):
                 iOn = toggle[1]
                 self._toggleTable[pixel,1+i*2] = iOff
                 self._toggleTable[pixel,2+i*2] = iOn
-    
+
+class allPixels(object):
+    def __init__(self,run):
+        self.run = run
+        self._pulses = None
+        self.loadPulses()
+    def loadPulses(self):
+        for p in range(36):
+            po = singlePixel(self.run,p)
+            po.loadFromHdf('bsn')
+            if self._pulses is None:
+                self._pulses = np.array([],dtype=po.dtype())
+            self._pulses = np.append(self._pulses,po.pulses())
+    def writePulses(self):
+        for p in range(36):
+            pxlPls = self._pulses[(self._pulses['pixel']==p)]
+            po = singlePixel(self.run,p)
+            po.setPulses(pxlPls)
+            po.writeHdfEvents('bsn')
+    def pixels(self):
+        return np.unique(self.pulses()['pixel'])
+    def pulses(self):
+        return self._pulses
+    def setPulses(self,pulses):
+        self._pulses = pulses
+    def pixelPulses(self,pixel):
+        return self.pulses()[(self.pulses()['pixel']==pixel)]
+    def setPixelPulses(self,pixel,pulses):
+        self._pulses = self.pulses()[(self.pulses()['pixel']!=pixel)]
+        self._pulses = np.append(self.pulses(),pulses)
+    def gainDrift(self):
+        if self.run=='k8r61':
+            gainObj = tempGainDrift(self._pulses)
+            self._pulses['temp'] = gainObj.eventTemps(self._pulses['time'])
+            for p in self.pixels():
+                pxlPls = self.pixelPulses(p)
+                pxlGain = gainObj.pixelGain(pxlPls)
+                pxlPls['gain'] = pxlGain
+                self.setPixelPulses(p,pxlPls)
+    def nonLin(self):
+        if self.run=='k8r61':
+            railTimes = (-1740,-540)
+            for p in self.pixels():
+                pxlPls = self.pixelPulses(p)
+                railPxlPls = pxlPls[((pxlPls['time']>railTimes[0])
+                                     &(pxlPls['time']<railTimes[1])
+                                     &(pxlPls['resolution']==0))]
+                lines = spectralLines(railPxlPls['ph'])
+                coefs = lines.nonLinGain()
+                if np.any(coefs):
+                    pxlPls['lin'] = coefs[0]/pxlPls['gain']
+                    pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
+                    pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
+                                      + pxlPls['quad']*np.square(pxlPls['ph']))
+                    self.setPixelPulses(p,pxlPls)
+                    print "Non-Linear Gain Correction Applied"
+                else: 
+                    print "Unable To Fit Non-Linearities"       
+    def eScale(self):
+        self.loadPulses()
+        self.gainDrift()
+        self.nonLin()
+        self.writePulses()
+                                                                   
+ 
+class spectralLines(object):
+    def __init__(self, pulseHeights):
+        self.ph = pulseHeights
+        self.binWidth = 5.
+        self.maxE = 4000.
+        self.gl = {'B':183.3, 'C':277.0, 'N':392.4, 'O':524.9, 'F':676.8, 
+                   'Ka':3313.8, 'Kb':3589.6}  
+        self.realE = np.array([])
+        self.fitE = np.array([])
+        self.fitEErr = np.array([])
+    def setBinWidth(self,binWidth):
+        self.binWidth = binWidth
+    def setMaxEnergy(self,maxEnergy):
+        self.maxE = maxEnergy
+    def numBins(self):
+        return int(self.maxE/self.binWidth)
+    def histogram(self):
+        rng = [0,self.maxE]
+        bins = self.numBins()
+        hy,hx = np.histogram(self.ph,range=rng,bins=bins)
+        hx = hx[:-1] + 0.5*self.binWidth
+        return hx,hy
+    def fitLine(self,lineID):
+        guess = self.gl[lineID]
+        halfWidth = 50.
+        linePH = self.ph[np.abs(self.ph-guess)<halfWidth]
+        if len(linePH)>0:
+            mu = np.mean(linePH)
+            sig = np.std(linePH)
+            halfWidth = 7*sig
+            hx,hy = self.histogram()
+            yfit = hy[np.abs(hx-mu)<halfWidth]
+            xfit = hx[np.abs(hx-mu)<halfWidth]
+            if np.sum(yfit)>0:
+                amp = np.max(yfit)
+                guess = np.array([mu,sig,amp,0])
+                try:
+                    popt, pcov = curve_fit(fitGaussWBG, xfit, yfit, p0=guess, 
+                                           bounds=(0,np.inf))
+                    area = np.sqrt(2*np.pi)*popt[2]*popt[1]/self.binWidth
+                    bkgdFlux = np.sqrt(popt[3]*(2*halfWidth)/self.binWidth)
+                    if (area>bkgdFlux):
+                        self.fitE = np.append(self.fitE,popt[0])
+                        self.fitEErr = np.append(self.fitEErr,popt[1]/np.sqrt(area))
+                        self.realE = np.append(self.realE,self.gl[lineID])
+                except RuntimeError:
+                    pass
+    def fitLines(self):
+        for line in self.gl:
+            self.fitLine(line)
+    def nonLinGain(self,order=2):
+        self.fitLines()
+        fit = np.zeros(order)
+        if len(self.fitE)>order: # orthogonal distance regression
+            guess = np.zeros(order)
+            guess[0] = 1.
+            myModel = Model(fitPolyBkwd)
+            xErr = self.fitEErr
+            yErr = .1*np.ones(len(self.realE))
+            myData = RealData(self.fitE,self.realE,sx=xErr,sy=yErr)
+            myODR = ODR(myData,myModel,beta0=guess)
+            myOutput = myODR.run()
+            fit = myOutput.beta 
+        elif len(self.realE)==order: # analytic solution
+            mat = np.zeros((order,order))
+            vec = np.zeros(order)
+            for i in range(order):
+                vec[i] = self.realE[i]
+                for j in range(order):
+                    mat[i,j] = self.fitE[i]**(j+1)
+            fit = np.linalg.solve(mat,vec)
+        return fit           
+            
+class tempGainDrift(object):
+    def __init__(self,pulses,calEnergy=3313.8):
+        iFile = 'data/tcp_Iflight.dat'
+        self.t,self.T = np.transpose(np.loadtxt(iFile))[([0,2],)]      
+        self.calEnergy = calEnergy
+        self.globalGain(pulses)
+    def eventTemps(self,times):
+        return 1000.*np.interp(times,self.t,self.T)
+    def globalGain(self,pls,order=4):
+         halfWidth = 1000
+         phGuess = self.calEnergy*np.ones(len(pls))
+         fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
+                          &(pls['temp']<55)&(pls['temp']>49)
+                          &(pls['resolution']==0))]
+         for i in range(5):
+            guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
+            phGuess = np.polyval(guess,fitPoints['temp'])
+            halfWidth = max(50,np.std(fitPoints['ph']-phGuess))
+            phGuess = np.polyval(guess,pls['temp'])
+            fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
+                             &(pls['temp']<55)&(pls['temp']>49)
+                             &(pls['resolution']==0))]
+         self.gain = guess/self.calEnergy 
+    def pixelGain(self,pls,order=4):
+         halfWidth = 100
+         phGuess = self.calEnergy*np.polyval(self.gain,pls['temp'])
+         fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
+                          &(pls['temp']<55)&(pls['temp']>49)
+                          &(pls['resolution']==0))]
+         guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
+         pixelGain = guess/self.calEnergy
+         return np.polyval(pixelGain,pls['temp'])             
+            
 class singlePixel(object):
-    def __init__(self,run,pixel,interactive=True):
+    def __init__(self,run,pixel,interactive=False):
         self.run = run
         self.pixel = pixel
         self.interactive = interactive
@@ -1079,12 +1249,18 @@ class singlePixel(object):
     def resetPulses(self):
         dtype1 = [('sample', '<f4'), ('ph', '<f4'), ('pixel', '<i2'), 
                   ('shape', '<f4'), ('resolution', '<i2'), ('time', '<f4'),
-                  ('gain', '<f4'), ('lin', '<f4'), ('quad', '<f4'), 
-                  ('energy','<f4')]
+                  ('temp', '<f4'), ('gain', '<f4'), ('lin', '<f4'), 
+                  ('quad', '<f4'), ('energy','<f4')]
         self._pulses = np.array([], dtype=dtype1)
     def addPulseRow(self):
         newRow = np.array([tuple(np.zeros(len(self.dtype())))],
                            dtype=self.dtype())
+        newRow['pixel'] = self.pixel
+        newRow['temp'] = np.nan
+        newRow['gain'] = np.nan
+        newRow['lin'] = np.nan
+        newRow['quad'] = np.nan
+        newRow['energy'] = np.nan
         self._pulses = np.append(self._pulses, newRow)
     def storeHiRes(self,fitterObj):
         params = fitterObj.storeParams()
@@ -1095,9 +1271,7 @@ class singlePixel(object):
             self.addPulseRow()
             self._pulses['ph'][-1] = amps[i]
             self._pulses['sample'][-1] = poss[i]
-            self._pulses['pixel'][-1] = self.pixel
             self._pulses['shape'][-1] = shapes[i]
-            self._pulses['resolution'][-1] = 0
             if bool(self.T0Sample()):
                 self._pulses['time'][-1] = self.TtimeForSample(poss[i])
     def storeLoRes(self,fitterObj):
@@ -1108,7 +1282,6 @@ class singlePixel(object):
             self.addPulseRow()
             self._pulses['ph'][-1] = amps[i]
             self._pulses['sample'][-1] = poss[i]
-            self._pulses['pixel'][-1] = self.pixel
             self._pulses['resolution'][-1] = 1
             if bool(self.T0Sample()):
                 self._pulses['time'][-1] = self.TtimeForSample(poss[i])
@@ -1186,86 +1359,62 @@ class singlePixel(object):
                                   + self._pulses['quad']*np.square(self._pulses['ph']))
             print "Non-Linear Gain Correction Applied"
         else: 
-            print "Unable To Fit Non-Linearities"
-            
-class spectralLines(object):
-    def __init__(self, pulseHeights):
-        self.ph = pulseHeights
-        self.binWidth = 5.
-        self.maxE = 4000.
-        self.gl = {'B':183.3, 'C':277.0, 'N':392.4, 'O':524.9, 'F':676.8, 
-                   'Ka':3313.8, 'Kb':3589.6}  
-        self.realE = np.array([])
-        self.fitE = np.array([])
-        self.fitEErr = np.array([])
-    def setBinWidth(self,binWidth):
-        self.binWidth = binWidth
-    def setMaxEnergy(self,maxEnergy):
-        self.maxE = maxEnergy
-    def numBins(self):
-        return int(self.maxE/self.binWidth)
-    def histogram(self):
-        rng = [0,self.maxE]
-        bins = self.numBins()
-        hy,hx = np.histogram(self.ph,range=rng,bins=bins)
-        hx = hx[:-1] + 0.5*self.binWidth
-        return hx,hy
-    def fitLine(self,lineID):
-        guess = self.gl[lineID]
-        halfWidth = 50.
-        linePH = self.ph[np.abs(self.ph-guess)<halfWidth]
-        if len(linePH)>0:
-            mu = np.mean(linePH)
-            sig = np.std(linePH)
-            halfWidth = 7*sig
-            hx,hy = self.histogram()
-            yfit = hy[np.abs(hx-mu)<halfWidth]
-            xfit = hx[np.abs(hx-mu)<halfWidth]
-            if np.sum(yfit)>0:
-                amp = np.max(yfit)
-                guess = np.array([mu,sig,amp,0])
-                try:
-                    popt, pcov = curve_fit(fitGaussWBG, xfit, yfit, p0=guess, 
-                                           bounds=(0,np.inf))
-                    area = np.sqrt(2*np.pi)*popt[2]*popt[1]/self.binWidth
-                    bkgdFlux = np.sqrt(popt[3]*(2*halfWidth)/self.binWidth)
-                    if (area>bkgdFlux):
-                        self.fitE = np.append(self.fitE,popt[0])
-                        self.fitEErr = np.append(self.fitEErr,popt[1]/np.sqrt(area))
-                        self.realE = np.append(self.realE,self.gl[lineID])
-                except RuntimeError:
-                    pass
-    def fitLines(self):
-        for line in self.gl:
-            self.fitLine(line)
-    def nonLinGain(self,order=2):
-        self.fitLines()
-        fit = np.zeros(order)
-        if len(self.fitE)>order: # orthogonal distance regression
-            guess = np.zeros(order)
-            guess[0] = 1.
-            myModel = Model(fitPolyBkwd)
-            xErr = self.fitEErr
-            yErr = .1*np.ones(len(self.realE))
-            myData = RealData(self.fitE,self.realE,sx=xErr,sy=yErr)
-            myODR = ODR(myData,myModel,beta0=guess)
-            myOutput = myODR.run()
-            fit = myOutput.beta 
-        elif len(self.realE)==order: # analytic solution
-            mat = np.zeros((order,order))
-            vec = np.zeros(order)
-            for i in range(order):
-                vec[i] = self.realE[i]
-                for j in range(order):
-                    mat[i,j] = self.fitE[i]**(j+1)
-            fit = np.linalg.solve(mat,vec)
-        return fit
+            print "Unable To Fit Non-Linearities"        
 
 ##############################################################################
 # General Use Funciton Definitions 
 # These are all needed for the above classes
 # Be careful changing these, since they may be called by multiple subroutines 
+# For ease of finding, they are sorted alphabetically
 ##############################################################################
+def avgNoise(data,locations,length,fs=1./96E-6):
+    df = fs/length
+    halfCosFraction = 0.5
+    window = halfCosWindow(np.ones(length),halfCosFraction)    
+    windowAdjustmentFactor = 1./(np.mean(np.square(window)))
+    avgPowerSpec = np.zeros(length/2+1)
+    numNoise = 0
+    for nIdx in locations:
+        sampledNoise = data[nIdx:nIdx+length]
+        sig, med = trueSigma(sampledNoise)
+        sampledNoise -= med
+        if np.sum(np.abs(sampledNoise)>5*sig)==0:
+            sampledNoise = halfCosWindow(sampledNoise,halfCosFraction)
+            sampledFFT = np.fft.rfft(sampledNoise)
+            sampledPS = np.square(np.abs(sampledFFT))
+            normalizedPSD = 2*windowAdjustmentFactor*sampledPS/(df*length**2)
+            avgPowerSpec += normalizedPSD
+            numNoise += 1
+    if numNoise<10:
+        print "ERROR: Not Enough Noise Samples"
+        avgPowerSpec = np.zeros(length/2+1)
+    else:
+        avgPowerSpec = avgPowerSpec/numNoise
+        print numNoise, "Good Noise Samples" 
+    return avgPowerSpec
+
+def avgSignal(data,locations,length):
+    numCal = len(locations)
+    signal = np.zeros(length)
+    if numCal<5:
+        print "ERROR: Not Enough Cal Pulses (%d)" % numCal
+    else:
+        for i in range(numCal):
+            j = int(locations[i])
+            signal += data[j-length/4:j+3*length/4]
+        signal = signal/float(numCal)
+        print numCal, "Good Cal Pulses"    
+    return signal
+
+def boxcarSmooth(inArray, boxsize, algorithm=None):  
+    box = np.ones(boxsize)/float(boxsize)
+    if algorithm=='long':
+        outArray = longConvolution(inArray,box,0)
+    else:
+        outArray = sig.fftconvolve(inArray,box,mode='full')
+        outArray = outArray[:len(inArray)]
+    return outArray
+
 def clusterIndicesToSpans(indices, maxDelta):
     clusters = []
     if len(indices) < 1:
@@ -1284,6 +1433,54 @@ def clusterIndicesToSpans(indices, maxDelta):
         i += 1
     clusters.append((group[0],group[-1]))
     return clusters
+    
+def dataFunction(segmentLength, dictionaryList, *params):
+    yValues = np.array([])
+    for dictionary in dictionaryList:
+        function = np.zeros(segmentLength)
+        templateLength = len(dictionary[0])
+        precision = len(dictionary)-1
+        for i in range(0,len(params),2):
+            amplitude = params[i]
+            floatPosition = params[i+1]
+            floorPosition = int(np.floor(floatPosition))
+            if ((floorPosition>-1.0*templateLength)
+                and(floorPosition<segmentLength)):
+                templateStart = max(0, -1*floorPosition)
+                templateStop = min(templateLength, segmentLength-floorPosition)
+                fullDecimal = floatPosition - floorPosition
+                equivalentDecimalLHS = ((fullDecimal // (1./precision)) 
+                                        * 1./precision)
+                equivalentDecimalLHS = np.around(equivalentDecimalLHS, 
+                                                 decimals=2)
+                equivalentDecimalRHS = np.around(equivalentDecimalLHS 
+                                                 + 1./precision, decimals=2)
+                templateWeight = ((equivalentDecimalRHS - fullDecimal)
+                                  /(1./precision))
+                templateToAdd = (templateWeight*dictionary[equivalentDecimalLHS] 
+                                 + (1-templateWeight)*dictionary[equivalentDecimalRHS])
+                templateToAdd = templateToAdd[templateStart:templateStop]
+                segmentStart = max(0,floorPosition)
+                segmentStop = min(segmentLength, floorPosition+templateLength)
+                assert (templateStop-templateStart)==(segmentStop-segmentStart)
+                function[segmentStart:segmentStop] += amplitude * templateToAdd
+        yValues = np.append(yValues, function)
+    return yValues
+    
+def fftShift(inArray, sampleShift, sampleForPulseArrival):
+    inLength = len(inArray)
+    inFft = np.fft.rfft(inArray)
+    samples = np.arange(len(inFft))
+    # +sampleForPulseArrival/templateLength needed to 
+    # account for t=0 sample occuring part way through the trace
+    shiftedFft = (np.exp(-2*np.pi*np.complex(0,1)*samples
+                        *(sampleShift+float(sampleForPulseArrival)/float(inLength))
+                        /inLength)*inFft) 
+    outArray = np.fft.irfft(shiftedFft)
+    if inLength%2 != 0:
+        outArray = np.append(outArray, 0)
+    assert(len(outArray)==inLength)
+    return outArray
 
 def findBiasToggle(y, DeltaT, maxJitter, dt, quietTime=0.03):
     dy = np.diff(y)
@@ -1321,138 +1518,7 @@ def findBiasToggle(y, DeltaT, maxJitter, dt, quietTime=0.03):
                 biasToggles.append((iOff,iOn))
                 break # Only one off per bias on
     return biasToggles
-
-def fitPolyBkwd(B,x):
-    func = np.zeros(len(x))
-    for i in range(len(B)):
-        func += B[i] * np.power(x,i+1)
-    return func
-
-def fitGaussWBG(x, *params):
-    mu = params[0]
-    sig = params[1]
-    amp = params[2]
-    yint = params[3]
-    if len(params)>4:
-        slp = params[4]
-    else:
-        slp = 0
-    return yint + slp*x + amp*np.exp(-np.power(x-mu,2.)/(2*np.power(sig,2.)))
-
-def scatterPulses(pulses):
-    goodPulses =  pulses[np.where(pulses['resolution']==0)]
-    mpl.scatter(goodPulses['sample'],goodPulses['ph'],marker='+',lw=.2)
-    mpl.xlabel('Sample')
-    mpl.ylabel('Pulse Height (Aprox. eV)')
-    mpl.title('Hi-Res Pulses')
-    mpl.show(block=True)
-
-def plotSignalNoise(signal,noise2,fs):
-    filterLength = len(signal)
-    dt = 1./fs
-    df = fs/filterLength
-    timeSeries = np.arange(filterLength)*dt
-    frequencySeries = np.arange(filterLength/2 +1)*df
-    mpl.figure()
-    mpl.subplot(211)
-    mpl.plot(timeSeries, signal, label = 'Avg. Pulse')
-    mpl.xlabel('Time [s]')
-    mpl.ylabel('Volts')
-    mpl.legend(loc='best')
-    mpl.subplot(212)
-    mpl.loglog(frequencySeries, noise2, label = 'Noise Power Spectrum')
-    mpl.xlabel('Frequency [Hz]')
-    mpl.ylabel('Vrms^2 / Hz')
-    mpl.legend(loc='best')
-    mpl.show(block=True)
     
-def plotFilters(amplitude,arrival,fs):
-    filterLength = len(amplitude)
-    dt = 1./fs
-    timeSeries = np.arange(filterLength)*dt
-    mpl.figure()
-    mpl.subplot(211)
-    mpl.plot(timeSeries, amplitude, label = 'Amplitude Filter')
-    mpl.xlabel('Time [s]')
-    mpl.ylabel('1/V')
-    mpl.legend(loc='best')
-    mpl.subplot(212)
-    mpl.plot(timeSeries, arrival, label = 'Arrival Filter')
-    mpl.xlabel('Time [s]')
-    mpl.ylabel('1/V')
-    mpl.legend(loc='best')
-    mpl.show(block=True)
-    
-def plotFilteredPulses(amplitude,arrival,fs):
-    templateLength = len(amplitude)
-    dt = 1./fs
-    timeSeries = np.arange(templateLength)*dt
-    mpl.figure()
-    mpl.subplot(211)
-    mpl.plot(timeSeries, amplitude, label = 'Amplitude Filtered Pulse')
-    mpl.ylabel('Arb. Units')
-    mpl.xlabel('Time [s]')
-    mpl.legend(loc='best')
-    mpl.subplot(212)
-    mpl.plot(timeSeries, arrival, label = 'Arrival Filtered Pulse')
-    mpl.ylabel('Arb. Units')
-    mpl.xlabel('Time [s]')
-    mpl.legend(loc='best')
-    mpl.show(block=True)
-
-def findNextFlat(data,iGoal,length=8192,step=65536):
-    flatFound = False
-    j1 = max(0,iGoal-length)
-    j2 = min(j1+step,len(data))
-    while not flatFound:
-        searchStream = data[j1:j2]
-        firstFlat = findFlat(searchStream,iGoal-j1,length=length)[1]
-        if (firstFlat<len(searchStream)) or (j2>=len(data)):
-            flatFound = True
-        else:
-            j2 += step
-    return firstFlat+j1 
-
-def innerProduct(f1,f2):
-    return np.inner(f1,f2).astype(float)/np.inner(f2,f2)       
-    
-def dataFunction(segmentLength, dictionaryList, *params):
-    yValues = np.array([])
-    for dictionary in dictionaryList:
-        function = np.zeros(segmentLength)
-        templateLength = len(dictionary[0])
-        precision = len(dictionary)-1
-        for i in range(0,len(params),2):
-            amplitude = params[i]
-            floatPosition = params[i+1]
-            floorPosition = int(np.floor(floatPosition))
-            if ((floorPosition>-1.0*templateLength)
-                and(floorPosition<segmentLength)):
-                templateStart = max(0, -1*floorPosition)
-                templateStop = min(templateLength, segmentLength-floorPosition)
-                fullDecimal = floatPosition - floorPosition
-                equivalentDecimalLHS = ((fullDecimal // (1./precision)) 
-                                        * 1./precision)
-                equivalentDecimalLHS = np.around(equivalentDecimalLHS, 
-                                                 decimals=2)
-                equivalentDecimalRHS = np.around(equivalentDecimalLHS 
-                                                 + 1./precision, decimals=2)
-                templateWeight = ((equivalentDecimalRHS - fullDecimal)
-                                  /(1./precision))
-                templateToAdd = (templateWeight*dictionary[equivalentDecimalLHS] 
-                                 + (1-templateWeight)*dictionary[equivalentDecimalRHS])
-                templateToAdd = templateToAdd[templateStart:templateStop]
-                segmentStart = max(0,floorPosition)
-                segmentStop = min(segmentLength, floorPosition+templateLength)
-                assert (templateStop-templateStart)==(segmentStop-segmentStart)
-                function[segmentStart:segmentStop] += amplitude * templateToAdd
-        yValues = np.append(yValues, function)
-    return yValues
-    
-def fitFunction(x, segmentLength, dictionaryList, *params):
-    totalFunction = dataFunction(segmentLength, dictionaryList, *params)    
-    return totalFunction[x]
-
 def findFlat(dataSeg,position,length=4096,calAmp=3313.8):    
     pls = trigger(dataSeg) 
     amp,rt = phRT(dataSeg,pls)
@@ -1484,6 +1550,46 @@ def findFlat(dataSeg,position,length=4096,calAmp=3313.8):
         RH = len(dataSeg)
     return LH, RH
 
+def findMultiMax(level, data, minSep=0):
+    maxlist = np.array([],dtype=int)
+    # Find indices of all points that exceed threshold
+    i = np.where(data > level)[0] 
+    # if at least one region is found, continue. Else return empty list
+    if len(i)!=0: 
+        # Within indices find continuous regions so we can separate them
+        z = np.diff(i) 
+        j = np.where(z > 1)[0]
+        i1 = i[0]
+        # if there are not multiple regions, return the global max location
+        if (len(j)==0): 
+            maxloc = np.argmax(data)
+            maxlist = np.append(maxlist, maxloc)
+        else:
+            for k in j:  # work to find max within each region         
+                i2 = i[k]+1
+                maxloc = np.argmax(data[i1:i2])+i1
+                maxlist = np.append(maxlist, maxloc)
+                i1 = i[k+1]
+            maxloc = np.argmax(data[i1:])+i1 # needed to get last region
+            maxlist = np.append(maxlist, maxloc)
+            if len(maxlist)>1:
+                maxlist = np.append(maxlist[0], 
+                                    maxlist[1:][np.where(np.diff(maxlist)>minSep)])
+    return maxlist    
+    
+def findNextFlat(data,iGoal,length=8192,step=65536):
+    flatFound = False
+    j1 = max(0,iGoal-length)
+    j2 = min(j1+step,len(data))
+    while not flatFound:
+        searchStream = data[j1:j2]
+        firstFlat = findFlat(searchStream,iGoal-j1,length=length)[1]
+        if (firstFlat<len(searchStream)) or (j2>=len(data)):
+            flatFound = True
+        else:
+            j2 += step
+    return firstFlat+j1 
+    
 def findSaturatedPulses(data, saturationType, threshold=None):    
     saturatedPulses = np.array([], dtype=int)
     saturationWidth = np.array([], dtype=int)
@@ -1522,7 +1628,192 @@ def findSaturatedPulses(data, saturationType, threshold=None):
                 saturationWidth = np.append(saturationWidth, saturationLength)
             i1 = saturatedSamples[region+1]
     return saturatedPulses
+    
+def fitFunction(x, segmentLength, dictionaryList, *params):
+    totalFunction = dataFunction(segmentLength, dictionaryList, *params)    
+    return totalFunction[x]
+    
+def fitGaussWBG(x, *params):
+    mu = params[0]
+    sig = params[1]
+    amp = params[2]
+    yint = params[3]
+    if len(params)>4:
+        slp = params[4]
+    else:
+        slp = 0
+    return yint + slp*x + amp*np.exp(-np.power(x-mu,2.)/(2*np.power(sig,2.)))
 
+def fitPolyBkwd(B,x):
+    func = np.zeros(len(x))
+    for i in range(len(B)):
+        func += B[i] * np.power(x,i+1)
+    return func
+    
+def FWHM(xdata, ydata, xpos):
+    try:
+        xidx = np.where(xdata==xpos)[0][0]
+    except IndexError:
+        print "ERROR: XPOSITION NOT IN XVECTOR"
+        return xdata[-1] - xdata[0]
+    try:
+        ymax = float(ydata[xidx])
+        try:
+            xLH = xdata[:xidx][ydata[:xidx]<ymax/2][-1]
+            xRH = xdata[xidx:][ydata[xidx:]<ymax/2][0]
+            return xRH - xLH
+        except IndexError:
+            print "ERROR: FWHM NOT CONTAINED IN GIVEN RANGE"
+            return xdata[-1] - xdata[0]
+    except ValueError:
+        print "ERROR: NO MAXIMUM IN DATA"
+        return xdata[-1] - xdata[0]
+        
+def halfCosWindow(inArray, halfCosFraction):
+    window = np.ones(len(inArray))
+    halfCosLength = int(halfCosFraction*len(inArray))
+    xSeries =  np.arange(2*halfCosLength)/float(2*halfCosLength-1)
+    cosFunction = 0.5*(1 - np.cos(2*np.pi*xSeries))
+    cosFunction[-1] = 0
+    window[:halfCosLength] = cosFunction[:halfCosLength]
+    window[-1*halfCosLength:] = cosFunction[-1*halfCosLength:]
+    outArray = inArray*window
+    return outArray
+    
+def innerProduct(f1,f2):
+    return np.inner(f1,f2).astype(float)/np.inner(f2,f2)   
+    
+def longConvolution(data, filter_t, sampleForPulseArrival):    
+    totalDataLength = len(data)
+    convolutionLength = int(2**20) 
+    filterLength = len(filter_t)
+    i1 = 0
+    i2 = min(int(i1+convolutionLength),totalDataLength)
+    dataFiltered = np.array([], dtype=float)
+    while i2 <= totalDataLength:
+        dataConvolutionSegment = data[i1:i2]
+        dataFilteredSeg = sig.fftconvolve(dataConvolutionSegment, 
+                                          filter_t, mode='full') 
+        # Some housekeeping needed to conserve sample-Ttime conversion 
+        dataFilteredSeg = np.roll(dataFilteredSeg, -1*sampleForPulseArrival) 
+        dataFilteredSeg = dataFilteredSeg[:-1*filterLength+1]
+        assert(len(dataFilteredSeg)==len(dataConvolutionSegment))
+        if i1==0:
+            dataFiltered = np.append(dataFiltered, 
+                                     dataFilteredSeg[:-1*filterLength])
+        elif i2==totalDataLength:
+            dataFiltered = np.append(dataFiltered, 
+                                     dataFilteredSeg[filterLength+1:])
+            break
+        else:
+            dataFiltered = np.append(dataFiltered, 
+                                     dataFilteredSeg[filterLength+1
+                                                     :-1*filterLength])
+        i1 = i2 - 2*filterLength - 1
+        i2 = min(int(i1+convolutionLength), totalDataLength)
+    assert(len(dataFiltered)==totalDataLength)
+    return dataFiltered
+    
+def phRT(dataSegment, positions, dt=96E-6, discriminator=0, doPlot=False): 
+    dat = triggerChannel(dataSegment,deriv=0)
+    plsPeak = np.diff(dat)<=0
+    plsPeak = np.append(plsPeak,True)
+    pulseHeights = np.array([],dtype=float)
+    riseTimes = np.array([],dtype=float)
+    fb = 0.2
+    ft = 0.8
+    for i in range(len(positions)):
+        pulseStart = positions[i]
+        preTrig = dat[pulseStart]
+        startSearch = pulseStart + np.argmax((dat[pulseStart:]-preTrig)>
+                                              discriminator)
+        pulsePeak = startSearch + np.argmax(plsPeak[startSearch:])
+        rawnp = dat[pulsePeak]
+        ph = rawnp-preTrig
+        rawfb = rawnp-(1.-fb)*(ph)
+        rawft = rawnp-(1.-ft)*(ph)
+        tfb = np.interp(rawfb,dat[pulseStart:pulsePeak+1],np.arange(pulseStart,
+                        pulsePeak+1))
+        tft = np.interp(rawft,dat[pulseStart:pulsePeak+1],np.arange(pulseStart,
+                        pulsePeak+1))
+        rt = dt*(tft-tfb)/np.log((1.-fb)/(1.-ft))
+        pulseHeights = np.append(pulseHeights,ph)
+        riseTimes = np.append(riseTimes,rt)
+        if doPlot:
+            mpl.plot(dat[pulseStart-248:pulseStart+776])
+            mpl.vlines(248,rawnp-ph,rawnp)
+            mpl.show(block=True)
+    return pulseHeights, riseTimes
+    
+def plotFilteredPulses(amplitude,arrival,fs):
+    templateLength = len(amplitude)
+    dt = 1./fs
+    timeSeries = np.arange(templateLength)*dt
+    mpl.figure()
+    mpl.subplot(211)
+    mpl.plot(timeSeries, amplitude, label = 'Amplitude Filtered Pulse')
+    mpl.ylabel('Arb. Units')
+    mpl.xlabel('Time [s]')
+    mpl.legend(loc='best')
+    mpl.subplot(212)
+    mpl.plot(timeSeries, arrival, label = 'Arrival Filtered Pulse')
+    mpl.ylabel('Arb. Units')
+    mpl.xlabel('Time [s]')
+    mpl.legend(loc='best')
+    mpl.show(block=True)
+    
+def plotFilters(amplitude,arrival,fs):
+    filterLength = len(amplitude)
+    dt = 1./fs
+    timeSeries = np.arange(filterLength)*dt
+    mpl.figure()
+    mpl.subplot(211)
+    mpl.plot(timeSeries, amplitude, label = 'Amplitude Filter')
+    mpl.xlabel('Time [s]')
+    mpl.ylabel('1/V')
+    mpl.legend(loc='best')
+    mpl.subplot(212)
+    mpl.plot(timeSeries, arrival, label = 'Arrival Filter')
+    mpl.xlabel('Time [s]')
+    mpl.ylabel('1/V')
+    mpl.legend(loc='best')
+    mpl.show(block=True)
+    
+def plotSignalNoise(signal,noise2,fs):
+    filterLength = len(signal)
+    dt = 1./fs
+    df = fs/filterLength
+    timeSeries = np.arange(filterLength)*dt
+    frequencySeries = np.arange(filterLength/2 +1)*df
+    mpl.figure()
+    mpl.subplot(211)
+    mpl.plot(timeSeries, signal, label = 'Avg. Pulse')
+    mpl.xlabel('Time [s]')
+    mpl.ylabel('Volts')
+    mpl.legend(loc='best')
+    mpl.subplot(212)
+    mpl.loglog(frequencySeries, noise2, label = 'Noise Power Spectrum')
+    mpl.xlabel('Frequency [Hz]')
+    mpl.ylabel('Vrms^2 / Hz')
+    mpl.legend(loc='best')
+    mpl.show(block=True)
+    
+def pulseHeights(dataSegment,positions,discriminator=0):
+    dat = triggerChannel(dataSegment,deriv=0)
+    plsPeak = np.diff(dat)<=0
+    plsPeak = np.append(plsPeak,True)
+    pulseHeights = np.array([],dtype=float)
+    for i in range(len(positions)):
+        pulseStart = positions[i]
+        preTrig = dat[pulseStart]
+        startSearch = pulseStart + np.argmax((dat[pulseStart:]-preTrig)>
+                                              discriminator)
+        pulsePeak = startSearch + np.argmax(plsPeak[startSearch:])
+        rawnp = dat[pulsePeak]
+        ph = rawnp-preTrig
+        pulseHeights = np.append(pulseHeights,ph)
+    return pulseHeights
+    
 def removeSaturatedPulses(data,positions,fade=512,searchWindow=65536,
                           minSeparation=8192):
     dataLen = len(data)
@@ -1599,119 +1890,14 @@ def removeSaturatedPulses(data,positions,fade=512,searchWindow=65536,
                 smplComplete = RH      
     return modData, mask.astype(bool)
 
-def FWHM(xdata, ydata, xpos):
-    try:
-        xidx = np.where(xdata==xpos)[0][0]
-    except IndexError:
-        print "ERROR: XPOSITION NOT IN XVECTOR"
-        return xdata[-1] - xdata[0]
-    try:
-        ymax = float(ydata[xidx])
-        try:
-            xLH = xdata[:xidx][ydata[:xidx]<ymax/2][-1]
-            xRH = xdata[xidx:][ydata[xidx:]<ymax/2][0]
-            return xRH - xLH
-        except IndexError:
-            print "ERROR: FWHM NOT CONTAINED IN GIVEN RANGE"
-            return xdata[-1] - xdata[0]
-    except ValueError:
-        print "ERROR: NO MAXIMUM IN DATA"
-        return xdata[-1] - xdata[0]
-
-def avgNoise(data,locations,length,fs=1./96E-6):
-    df = fs/length
-    halfCosFraction = 0.5
-    window = halfCosWindow(np.ones(length),halfCosFraction)    
-    windowAdjustmentFactor = 1./(np.mean(np.square(window)))
-    avgPowerSpec = np.zeros(length/2+1)
-    numNoise = 0
-    for nIdx in locations:
-        sampledNoise = data[nIdx:nIdx+length]
-        sig, med = trueSigma(sampledNoise)
-        sampledNoise -= med
-        if np.sum(np.abs(sampledNoise)>5*sig)==0:
-            sampledNoise = halfCosWindow(sampledNoise,halfCosFraction)
-            sampledFFT = np.fft.rfft(sampledNoise)
-            sampledPS = np.square(np.abs(sampledFFT))
-            normalizedPSD = 2*windowAdjustmentFactor*sampledPS/(df*length**2)
-            avgPowerSpec += normalizedPSD
-            numNoise += 1
-    if numNoise<10:
-        print "ERROR: Not Enough Noise Samples"
-        avgPowerSpec = np.zeros(length/2+1)
-    else:
-        avgPowerSpec = avgPowerSpec/numNoise
-        print numNoise, "Good Noise Samples" 
-    return avgPowerSpec
-
-def avgSignal(data,locations,length):
-    numCal = len(locations)
-    signal = np.zeros(length)
-    if numCal<5:
-        print "ERROR: Not Enough Cal Pulses (%d)" % numCal
-    else:
-        for i in range(numCal):
-            j = int(locations[i])
-            signal += data[j-length/4:j+3*length/4]
-        signal = signal/float(numCal)
-        print numCal, "Good Cal Pulses"    
-    return signal
-
-def boxcarSmooth(inArray, boxsize, algorithm=None):  
-    box = np.ones(boxsize)/float(boxsize)
-    if algorithm=='long':
-        outArray = longConvolution(inArray,box,0)
-    else:
-        outArray = sig.fftconvolve(inArray,box,mode='full')
-        outArray = outArray[:len(inArray)]
-    return outArray
+def scatterPulses(pulses):
+    goodPulses =  pulses[np.where(pulses['resolution']==0)]
+    mpl.scatter(goodPulses['sample'],goodPulses['ph'],marker='+',lw=.2)
+    mpl.xlabel('Sample')
+    mpl.ylabel('Pulse Height (Aprox. eV)')
+    mpl.title('Hi-Res Pulses')
+    mpl.show(block=True)
     
-def pulseHeights(dataSegment,positions,discriminator=0):
-    dat = triggerChannel(dataSegment,deriv=0)
-    plsPeak = np.diff(dat)<=0
-    plsPeak = np.append(plsPeak,True)
-    pulseHeights = np.array([],dtype=float)
-    for i in range(len(positions)):
-        pulseStart = positions[i]
-        preTrig = dat[pulseStart]
-        startSearch = pulseStart + np.argmax((dat[pulseStart:]-preTrig)>
-                                              discriminator)
-        pulsePeak = startSearch + np.argmax(plsPeak[startSearch:])
-        rawnp = dat[pulsePeak]
-        ph = rawnp-preTrig
-        pulseHeights = np.append(pulseHeights,ph)
-    return pulseHeights
-def phRT(dataSegment, positions, dt=96E-6, discriminator=0, doPlot=False): 
-    dat = triggerChannel(dataSegment,deriv=0)
-    plsPeak = np.diff(dat)<=0
-    plsPeak = np.append(plsPeak,True)
-    pulseHeights = np.array([],dtype=float)
-    riseTimes = np.array([],dtype=float)
-    fb = 0.2
-    ft = 0.8
-    for i in range(len(positions)):
-        pulseStart = positions[i]
-        preTrig = dat[pulseStart]
-        startSearch = pulseStart + np.argmax((dat[pulseStart:]-preTrig)>
-                                              discriminator)
-        pulsePeak = startSearch + np.argmax(plsPeak[startSearch:])
-        rawnp = dat[pulsePeak]
-        ph = rawnp-preTrig
-        rawfb = rawnp-(1.-fb)*(ph)
-        rawft = rawnp-(1.-ft)*(ph)
-        tfb = np.interp(rawfb,dat[pulseStart:pulsePeak+1],np.arange(pulseStart,
-                        pulsePeak+1))
-        tft = np.interp(rawft,dat[pulseStart:pulsePeak+1],np.arange(pulseStart,
-                        pulsePeak+1))
-        rt = dt*(tft-tfb)/np.log((1.-fb)/(1.-ft))
-        pulseHeights = np.append(pulseHeights,ph)
-        riseTimes = np.append(riseTimes,rt)
-        if doPlot:
-            mpl.plot(dat[pulseStart-248:pulseStart+776])
-            mpl.vlines(248,rawnp-ph,rawnp)
-            mpl.show(block=True)
-    return pulseHeights, riseTimes
-
 def selectCals(data,locations,length,fs=1./96E-6,interactive=False):
     amplitudes, RTs = phRT(data,locations,dt=1./fs)
     phPDFy,phPDFx = np.histogram(amplitudes,range=[2,6],bins=400)
@@ -1731,6 +1917,7 @@ def selectCals(data,locations,length,fs=1./96E-6,interactive=False):
         mpl.scatter(amplitudes, RTs, marker='+')
         mpl.vlines([xmin,xmax],ymin,ymax)
         mpl.hlines([ymin,ymax],xmin,xmax)
+        mpl.grid()
         mpl.ion()
         mpl.show(block=False)
         acceptRange = not raw_input("Accept Pulse Selection? (Y/n)")[:1].lower()=='n'
@@ -1740,34 +1927,35 @@ def selectCals(data,locations,length,fs=1./96E-6,interactive=False):
             xmin, xmax = mpl.xlim()
         mpl.close()
     goodCals = locations[(RTs>=ymin)&(RTs<=ymax)&(amplitudes>=xmin)&(amplitudes<=xmax)]
-    return goodCals
+    return goodCals        
+    
+def signalAndNoiseLoc(inArray, filLen):
+    pulseLocations = trigger(inArray) 
+    pre = np.diff(pulseLocations)
+    post = np.copy(pre)
+    pre = np.append(pulseLocations[0],pre)
+    post = np.append(post,len(inArray)-pulseLocations[-1]-1)
+    signalLoc = pulseLocations[np.where((pre>5*filLen/4)&(post>3*filLen/4))]
+    noiseLoc = pulseLocations[np.where(pre>9*filLen/4)]-5*filLen/4
+    return signalLoc, noiseLoc
+    
+def trigger(dataSegment):
+    trig = triggerChannel(dataSegment)
+    triggerLevel = 5*trueSigma(trig)[0]    
+    triggerList = findMultiMax(triggerLevel, trig)
+    preTrig = (np.diff(trig)<=0)&(trig[1:]<=0)
+    preTrig = np.append(True,preTrig)
+    samples = np.array([t-np.argmax(preTrig[:t+1][::-1]) for t in triggerList],dtype=int)
+    return samples
 
-def findMultiMax(level, data, minSep=0):
-    maxlist = np.array([],dtype=int)
-    # Find indices of all points that exceed threshold
-    i = np.where(data > level)[0] 
-    # if at least one region is found, continue. Else return empty list
-    if len(i)!=0: 
-        # Within indices find continuous regions so we can separate them
-        z = np.diff(i) 
-        j = np.where(z > 1)[0]
-        i1 = i[0]
-        # if there are not multiple regions, return the global max location
-        if (len(j)==0): 
-            maxloc = np.argmax(data)
-            maxlist = np.append(maxlist, maxloc)
-        else:
-            for k in j:  # work to find max within each region         
-                i2 = i[k]+1
-                maxloc = np.argmax(data[i1:i2])+i1
-                maxlist = np.append(maxlist, maxloc)
-                i1 = i[k+1]
-            maxloc = np.argmax(data[i1:])+i1 # needed to get last region
-            maxlist = np.append(maxlist, maxloc)
-            if len(maxlist)>1:
-                maxlist = np.append(maxlist[0], 
-                                    maxlist[1:][np.where(np.diff(maxlist)>minSep)])
-    return maxlist    
+def triggerChannel(dataSegment, deriv=1, invert=True):
+    # filter parameters chosen for risetime of 1.5ms (~15 samples)
+    # Calculate a smoothed 1st derivative
+    savgol = sig.savgol_filter(dataSegment, window_length= 15, polyorder = 3, 
+                               deriv=deriv)     
+    if invert:    
+        savgol = -1.0*savgol
+    return savgol   
 
 def trueSigma(inArray):
     tolerance = .01
@@ -1785,105 +1973,4 @@ def trueSigma(inArray):
             med = np.median(currentPoints)
             numIter += 1
     return sig, med
-
-def triggerChannel(dataSegment, deriv=1, invert=True):
-    # filter parameters chosen for risetime of 1.5ms (~15 samples)
-    # Calculate a smoothed 1st derivative
-    savgol = sig.savgol_filter(dataSegment, window_length= 15, polyorder = 3, 
-                               deriv=deriv)     
-    if invert:    
-        savgol = -1.0*savgol
-    return savgol   
-
-def trigger(dataSegment):
-    trig = triggerChannel(dataSegment)
-    triggerLevel = 5*trueSigma(trig)[0]    
-    triggerList = findMultiMax(triggerLevel, trig)
-    preTrig = (np.diff(trig)<=0)&(trig[1:]<=0)
-    preTrig = np.append(True,preTrig)
-    samples = np.array([t-np.argmax(preTrig[:t+1][::-1]) for t in triggerList],dtype=int)
-    return samples
-    
-def signalAndNoiseLoc(inArray, filLen):
-    pulseLocations = trigger(inArray) 
-    pre = np.diff(pulseLocations)
-    post = np.copy(pre)
-    pre = np.append(pulseLocations[0],pre)
-    post = np.append(post,len(inArray)-pulseLocations[-1]-1)
-    signalLoc = pulseLocations[np.where((pre>5*filLen/4)&(post>3*filLen/4))]
-    noiseLoc = pulseLocations[np.where(pre>9*filLen/4)]-5*filLen/4
-    return signalLoc, noiseLoc
-
-def fftShift(inArray, sampleShift, sampleForPulseArrival):
-    inLength = len(inArray)
-    inFft = np.fft.rfft(inArray)
-    samples = np.arange(len(inFft))
-    # +sampleForPulseArrival/templateLength needed to 
-    # account for t=0 sample occuring part way through the trace
-    shiftedFft = (np.exp(-2*np.pi*np.complex(0,1)*samples
-                        *(sampleShift+float(sampleForPulseArrival)/float(inLength))
-                        /inLength)*inFft) 
-    outArray = np.fft.irfft(shiftedFft)
-    if inLength%2 != 0:
-        outArray = np.append(outArray, 0)
-    assert(len(outArray)==inLength)
-    return outArray
-    
-def longConvolution(data, filter_t, sampleForPulseArrival):    
-    totalDataLength = len(data)
-    convolutionLength = int(2**20) 
-    filterLength = len(filter_t)
-    i1 = 0
-    i2 = min(int(i1+convolutionLength),totalDataLength)
-    dataFiltered = np.array([], dtype=float)
-    while i2 <= totalDataLength:
-        dataConvolutionSegment = data[i1:i2]
-        dataFilteredSeg = sig.fftconvolve(dataConvolutionSegment, 
-                                          filter_t, mode='full') 
-        # Some housekeeping needed to conserve sample-Ttime conversion 
-        dataFilteredSeg = np.roll(dataFilteredSeg, -1*sampleForPulseArrival) 
-        dataFilteredSeg = dataFilteredSeg[:-1*filterLength+1]
-        assert(len(dataFilteredSeg)==len(dataConvolutionSegment))
-        if i1==0:
-            dataFiltered = np.append(dataFiltered, 
-                                     dataFilteredSeg[:-1*filterLength])
-        elif i2==totalDataLength:
-            dataFiltered = np.append(dataFiltered, 
-                                     dataFilteredSeg[filterLength+1:])
-            break
-        else:
-            dataFiltered = np.append(dataFiltered, 
-                                     dataFilteredSeg[filterLength+1
-                                                     :-1*filterLength])
-        i1 = i2 - 2*filterLength - 1
-        i2 = min(int(i1+convolutionLength), totalDataLength)
-    assert(len(dataFiltered)==totalDataLength)
-    return dataFiltered
-
-def halfCosWindow(inArray, halfCosFraction):
-    window = np.ones(len(inArray))
-    halfCosLength = int(halfCosFraction*len(inArray))
-    xSeries =  np.arange(2*halfCosLength)/float(2*halfCosLength-1)
-    cosFunction = 0.5*(1 - np.cos(2*np.pi*xSeries))
-    cosFunction[-1] = 0
-    window[:halfCosLength] = cosFunction[:halfCosLength]
-    window[-1*halfCosLength:] = cosFunction[-1*halfCosLength:]
-    outArray = inArray*window
-    return outArray
-
-    
-    
-
-    
-
-    
-    
-
-    
-    
-                
-     
-    
-    
-        
 

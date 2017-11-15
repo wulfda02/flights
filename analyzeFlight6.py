@@ -15,15 +15,16 @@ warnings.filterwarnings("ignore",".*invalid value encountered*")
 
 run = 'k8r61'
 pixels = range(36)
-interactive = False
 
 # Make bsn file from card data if not already done
 # Also get timing
 fn = "%s.bsn.hdf5" % run
 if not os.path.isfile(fn):
+    
     print "Making bsn file..."
     cardData = fl.cardData(run)
     cardData.writeAllPixels()
+    
     print "Applying timing..."
     timing = fl.groupTiming(run)
     timing.correctedFlightTiming()
@@ -33,7 +34,7 @@ for pixel in pixels:
     print run, pixel
 
     # Load data for pixel from hdf5 file
-    pxlObj = fl.singlePixel(run,pixel,interactive)
+    pxlObj = fl.singlePixel(run,pixel)
     pxlObj.loadFromHdf('bsn')
     
     # Make optimum filters
@@ -41,7 +42,7 @@ for pixel in pixels:
     if filters is None:
         print "Bad Pixel: Unable To Make Filter"
         continue
-    if (filters.bslnRes()>15) and not interactive:
+    if (filters.bslnRes()>15):
         print "Bad Pixel: Poor Resolution"
         continue
         
@@ -51,13 +52,10 @@ for pixel in pixels:
     # Fit filtered data
     pxlObj.fitFilteredData(filters)
     
-    # Apply non-linear gain scale
-    pxlObj.nonLinGain()
-    
     # Save fit to hdf5 file
-    save = True
-    if interactive:
-        save = raw_input("Save session? (Y/n)")[:1].lower()=='y'
-    if save:
-        pxlObj.writeHdfFit('bsn')
+    pxlObj.writeHdfFit('bsn')
+        
+# Apply temperature corrected non-linear gain scale
+runObj = fl.allPixels(run)
+runObj.eScale()
 
