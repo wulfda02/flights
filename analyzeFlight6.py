@@ -55,7 +55,7 @@ for pixel in pixels:
     # Save fit to hdf5 file
     pxlObj.writeHdfFit('bsn')
         
-# Apply temperature corrected non-linear gain scale
+# Apply temperature-corrected non-linear gain scale
 runObj = fl.allPixels(run)
 runObj.eScale()
 
