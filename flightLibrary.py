@@ -347,6 +347,8 @@ class fitter(object): # Details of fitting stored here
                                        self._ovrlp)  
         self._currSegGood = False
         self._prvSegGood = False
+    def setIterations(self,nIter):
+        self._nIter = nIter
     def lastStoredPulsePosition(self):
         return self.paramsObj.lastStoredPulsePosition()
     def sampleForPulseArrival(self):
@@ -786,8 +788,9 @@ class allPixels(object):
         self._pulses = np.append(self.pulses(),pulses)
     def gainDrift(self):
         if self.run=='k8r61':
-            gainObj = tempGainDrift(self._pulses)
+            gainObj = tempGainDrift('data/tcp_Iflight.dat')
             self._pulses['temp'] = gainObj.eventTemps(self._pulses['time'])
+            gainObj.globalGain(self._pulses)
             for p in self.pixels():
                 pxlPls = self.pixelPulses(p)
                 pxlGain = gainObj.pixelGain(pxlPls)
@@ -809,11 +812,9 @@ class allPixels(object):
                     pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
                                       + pxlPls['quad']*np.square(pxlPls['ph']))
                     self.setPixelPulses(p,pxlPls)
-                    print "Non-Linear Gain Correction Applied"
                 else: 
-                    print "Unable To Fit Non-Linearities"       
+                    print "Unable To Fit Non-Linearities For Pixel %d" % p
     def eScale(self):
-        self.loadPulses()
         self.gainDrift()
         self.nonLin()
         self.writePulses()
@@ -893,36 +894,33 @@ class spectralLines(object):
         return fit           
             
 class tempGainDrift(object):
-    def __init__(self,pulses,calEnergy=3313.8):
-        iFile = 'data/tcp_Iflight.dat'
+    def __init__(self,iFile,calEnergy=3313.8):
         self.t,self.T = np.transpose(np.loadtxt(iFile))[([0,2],)]      
         self.calEnergy = calEnergy
-        self.globalGain(pulses)
     def eventTemps(self,times):
         return 1000.*np.interp(times,self.t,self.T)
-    def globalGain(self,pls,order=4):
+    def globalGain(self,pls,order=2):
          halfWidth = 1000
          phGuess = self.calEnergy*np.ones(len(pls))
-         fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
-                          &(pls['temp']<55)&(pls['temp']>49)
-                          &(pls['resolution']==0))]
          for i in range(5):
+            fitPoints = pls[np.where((np.abs(pls['ph']-phGuess)<halfWidth)
+                                   &(pls['temp']<55)&(pls['temp']>49)
+                                   &(pls['resolution']==0))]
             guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
             phGuess = np.polyval(guess,fitPoints['temp'])
             halfWidth = max(50,np.std(fitPoints['ph']-phGuess))
             phGuess = np.polyval(guess,pls['temp'])
-            fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
-                             &(pls['temp']<55)&(pls['temp']>49)
-                             &(pls['resolution']==0))]
          self.gain = guess/self.calEnergy 
-    def pixelGain(self,pls,order=4):
+    def pixelGain(self,pls,order=2):
          halfWidth = 100
-         phGuess = self.calEnergy*np.polyval(self.gain,pls['temp'])
+         pixelGain = self.gain
+         phGuess = self.calEnergy*np.polyval(pixelGain,pls['temp'])
          fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
                           &(pls['temp']<55)&(pls['temp']>49)
                           &(pls['resolution']==0))]
-         guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
-         pixelGain = guess/self.calEnergy
+         if len(fitPoints)>order:
+             guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
+             pixelGain = guess/self.calEnergy
          return np.polyval(pixelGain,pls['temp'])             
             
 class singlePixel(object):
@@ -939,7 +937,7 @@ class singlePixel(object):
         self._normData = None
         self._phData = None
         self._ptData = None
-        self._pulses = self.resetPulses()
+        self.resetPulses()
     def setData(self,data):
         self._data = data
     def dataInVolts(self):
@@ -1321,6 +1319,8 @@ class singlePixel(object):
     def fitFilteredData(self,filterObj):
         self.resetPulses()
         fitterObj = fitter(filterObj)
+        if (self.run=='k8r61')and(self.pixel==18):
+            fitterObj.setIterations(2)
         i1 = 0
         i2 = i1+65536
         segmentObj = self.segmentData(i1,i2)
