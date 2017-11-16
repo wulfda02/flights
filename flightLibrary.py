@@ -428,7 +428,7 @@ class fitter(object): # Details of fitting stored here
     def nextSegmentStart(self):
         return self._i1 + self._segLen - self._ovrlp
     def threshold(self,iteration):
-        return self._initThrshld*(self._redFctr**iteration)
+        return max(50.,self._initThrshld*(self._redFctr**iteration))
     def addPulses(self,iteration):
         trig = self.threshold(iteration)
         residual = self.filteredResidual()
@@ -804,7 +804,7 @@ class allPixels(object):
                 railPxlPls = pxlPls[((pxlPls['time']>railTimes[0])
                                      &(pxlPls['time']<railTimes[1])
                                      &(pxlPls['resolution']==0))]
-                lines = spectralLines(railPxlPls['ph'])
+                lines = spectralLines(railPxlPls['ph']/railPxlPls['gain'])
                 coefs = lines.nonLinGain()
                 if np.any(coefs):
                     pxlPls['lin'] = coefs[0]/pxlPls['gain']
@@ -899,7 +899,7 @@ class tempGainDrift(object):
         self.calEnergy = calEnergy
     def eventTemps(self,times):
         return 1000.*np.interp(times,self.t,self.T)
-    def globalGain(self,pls,order=2):
+    def globalGain(self,pls,order=4):
          halfWidth = 1000
          phGuess = self.calEnergy*np.ones(len(pls))
          for i in range(5):
@@ -911,7 +911,7 @@ class tempGainDrift(object):
             halfWidth = max(50,np.std(fitPoints['ph']-phGuess))
             phGuess = np.polyval(guess,pls['temp'])
          self.gain = guess/self.calEnergy 
-    def pixelGain(self,pls,order=2):
+    def pixelGain(self,pls,order=4):
          halfWidth = 100
          pixelGain = self.gain
          phGuess = self.calEnergy*np.polyval(pixelGain,pls['temp'])
@@ -921,6 +921,10 @@ class tempGainDrift(object):
          if len(fitPoints)>order:
              guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
              pixelGain = guess/self.calEnergy
+             mpl.scatter(fitPoints['temp'],fitPoints['ph'],marker='+',lw=.2)
+             x = np.arange(49,55,.1)
+             mpl.plot(x,np.polyval(guess,x),'r')
+             mpl.show(block=True)
          return np.polyval(pixelGain,pls['temp'])             
             
 class singlePixel(object):
@@ -1319,8 +1323,6 @@ class singlePixel(object):
     def fitFilteredData(self,filterObj):
         self.resetPulses()
         fitterObj = fitter(filterObj)
-        if (self.run=='k8r61')and(self.pixel==18):
-            fitterObj.setIterations(2)
         i1 = 0
         i2 = i1+65536
         segmentObj = self.segmentData(i1,i2)
