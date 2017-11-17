@@ -30,37 +30,37 @@ if not os.path.isfile(fn):
     timing.correctedFlightTiming()
     
 
-#for pixel in pixels:
-#    print run, pixel
-#
-#    # Load data for pixel from hdf5 file
-#    pxlObj = fl.singlePixel(run,pixel)
-#    pxlObj.loadFromHdf('bsn')
-#    
-#    # Make optimum filters
-#    filters = pxlObj.getFilter()
-#    if filters is None:
-#        print "Bad Pixel: Unable To Make Filter"
-#        continue
-#    if (filters.bslnRes()>15)and(pixel!=18):
-#        print "Bad Pixel: Poor Resolution"
-#        continue
-#        
-#    # Convolve filters with data
-#    pxlObj.filterData(filters)
-#    
-#    # Fit filtered data
-#    pxlObj.fitFilteredData(filters)
-#    
-#    # Save fit to hdf5 file
-#    pxlObj.writeHdfFit('bsn')
+for pixel in pixels:
+    print run, pixel
+
+    # Load data for pixel from hdf5 file
+    pxlObj = fl.singlePixel(run,pixel)
+    pxlObj.loadFromHdf('bsn')
+    
+    # Make optimum filters
+    filters = pxlObj.getFilter()
+    if filters is None:
+        print "Bad Pixel: Unable To Make Filter"
+        continue
+    if (filters.bslnRes()>15)and(pixel!=18):
+        print "Bad Pixel: Poor Resolution"
+        continue
+        
+    # Convolve filters with data
+    pxlObj.filterData(filters)
+    
+    # Fit filtered data
+    pxlObj.fitFilteredData(filters)
+    
+    # Save fit to hdf5 file
+    pxlObj.writeHdfFit('bsn')
         
 # Apply temperature-corrected non-linear gain scale
 runObj = fl.allPixels(run)
 runObj.eScale()
 
 # Create on-target spectrum
-runObj.selectEvents()
+#runObj.selectEvents()
 
 
 
