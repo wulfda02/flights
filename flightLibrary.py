@@ -1347,7 +1347,7 @@ class singlePixel(object):
         maskSeg = self._mask[i1:i2]
         segmentObj = fitSegements(filteredSeg,unfilteredSeg,maskSeg,i1)
         return segmentObj        
-    def nextSegment(self,fitterObj,segmentLength=65536):
+    def nextSegment(self,fitterObj,segmentLength=32768):
         i1 = fitterObj.nextSegmentStart()
         i2 = i1 + segmentLength
         fitterObj.resetOverlap()
