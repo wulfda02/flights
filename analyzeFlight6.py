@@ -59,32 +59,9 @@ if not os.path.isfile(fn):
 runObj = fl.allPixels(run)
 runObj.eScale()
 
-import matplotlib.pyplot as mpl
-import numpy as np
-flightTimes = {'rail':(-1740,-540),'onSky':(185,436),
-               'gvClose':(440,505),'chute':(706,920)}
-p = runObj.pulses()
+# Create on-target spectrum
+runObj.selectEvents()
 
-p.sort(order='time')
-plsSep = np.diff(p['time'])
-preSep = np.append(np.inf,plsSep)
-postSep = np.append(plsSep,np.inf)
-minSep = np.minimum(preSep,postSep)
-p = p[((p['resolution']==0)&(p['time']>flightTimes['onSky'][0])
-       &(p['time']<flightTimes['onSky'][1])&(minSep>.005)&(np.abs(p['shape']-1)<.05))]
 
-badPixels = [9,18,28,32,33]
-for b in badPixels:
-    p = p[(p['pixel']!=b)]
-#
-#p.sort(order=('pixel','time'))
-#plsSep = np.diff(p['time'])
-#preSep = np.append(np.inf,plsSep)
-#postSep = np.append(plsSep,np.inf)
-#minSep = np.minimum(preSep,postSep)
-#p = p[(minSep>.1)]
-              
-mpl.hist(p['energy'],range=[0,4000],bins=1600,histtype='step')
-mpl.show(block=True)
 
 

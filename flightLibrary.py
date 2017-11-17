@@ -11,6 +11,7 @@ from scipy import signal as sig
 import astropy.io.fits as fits
 from scipy.optimize import curve_fit
 from scipy.odr import ODR, Model, RealData
+import scipy.stats as sts
 import time
 import os
 import h5py
@@ -333,7 +334,7 @@ class fitter(object): # Details of fitting stored here
         self._tmpLen = self.filtObj.templateLength()
         self._ovrlp = int(1.1*self._tmpLen)
         self._mxTry = 10 # max number of fitting attemps per segment
-        self._initThrshld = 2500. # approx. eV of initial threshold
+        self._initThrshld = 3000. # approx. eV of initial threshold
         self._redFctr = 0.1 # should be >.06 to avoid ringing 
         self._nIter = 3
         self._minSep = 100 # minimum separation for finding new pulses
@@ -428,7 +429,7 @@ class fitter(object): # Details of fitting stored here
     def nextSegmentStart(self):
         return self._i1 + self._segLen - self._ovrlp
     def threshold(self,iteration):
-        return max(50.,self._initThrshld*(self._redFctr**iteration))
+        return self._initThrshld*(self._redFctr**iteration)
     def addPulses(self,iteration):
         trig = self.threshold(iteration)
         residual = self.filteredResidual()
@@ -761,15 +762,15 @@ class allPixels(object):
     def __init__(self,run):
         self.run = run
         self._pulses = None
-        self.loadPulses()
-    def loadPulses(self):
+        self.loadEvents()
+    def loadEvents(self):
         for p in range(36):
             po = singlePixel(self.run,p)
             po.loadFromHdf('bsn')
             if self._pulses is None:
                 self._pulses = np.array([],dtype=po.dtype())
             self._pulses = np.append(self._pulses,po.pulses())
-    def writePulses(self):
+    def writeEvents(self):
         for p in range(36):
             pxlPls = self._pulses[(self._pulses['pixel']==p)]
             po = singlePixel(self.run,p)
@@ -798,14 +799,14 @@ class allPixels(object):
                 self.setPixelPulses(p,pxlPls)
     def nonLin(self):
         if self.run=='k8r61':
-            railTimes = (-1740,-540)
+            railTime = (-1740,-540)
             for p in self.pixels():
                 pxlPls = self.pixelPulses(p)
-                railPxlPls = pxlPls[((pxlPls['time']>railTimes[0])
-                                     &(pxlPls['time']<railTimes[1])
+                railPxlPls = pxlPls[((pxlPls['time']>railTime[0])
+                                     &(pxlPls['time']<railTime[1])
                                      &(pxlPls['resolution']==0))]
                 lines = spectralLines(railPxlPls['ph']/railPxlPls['gain'])
-                coefs = lines.nonLinGain()
+                coefs = lines.eNonLin()
                 if np.any(coefs):
                     pxlPls['lin'] = coefs[0]/pxlPls['gain']
                     pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
@@ -817,7 +818,39 @@ class allPixels(object):
     def eScale(self):
         self.gainDrift()
         self.nonLin()
-        self.writePulses()
+        self.writeEvents()
+    def selectEvents(self):
+        if self.run=='k8r61':
+            dt2 = 0.002
+            fov = 0.809259 # cosine weighted 30.5 degree radius fov in sr
+            pArea = .04 # area of one pixel in cm^2
+            effArea = 0
+            exposure = 0
+            skyTime = (185,436)
+            badPixels = np.array([9,18,28,32,33],dtype=int)
+            goodPixels = np.setdiff1d(self.pixels(),badPixels)
+            skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
+                                    &(self.pulses()['time']<skyTime[1]))]
+            goodPls = np.array([],dtype=skyPls.dtype)
+            skyPls.sort(order='time')
+            rates = fitStats(skyPls['time'])
+            lmdaTot = np.sum(rates)
+            pxlSep = np.diff(skyPls['time'])
+            prePxlSep = np.append(np.inf,pxlSep)
+            pstPxlSep = np.append(pxlSep,np.inf)
+            minPxlSep = np.minimum(prePxlSep,pstPxlSep)
+            eff2 = (1.-sts.gamma.cdf(dt2,a=1,scale=1./lmdaTot))**2
+            for p in goodPixels:
+                pxlObj = singlePixel(self.run,p)
+                pxlObj.loadFromHdf('bsn')
+                LT = pxlObj.liveTime(skyTime)
+                effArea += fov*pArea
+                exposure += eff2*LT
+                pxlPls = skyPls[((skyPls['pixel']==p)&(minPxlSep>dt2)
+                                 &(skyPls['resolution']==0))]
+                goodPls = np.append(goodPls,pxlPls)
+            
+            
                                                                    
  
 class spectralLines(object):
@@ -870,7 +903,7 @@ class spectralLines(object):
     def fitLines(self):
         for line in self.gl:
             self.fitLine(line)
-    def nonLinGain(self,order=2):
+    def eNonLin(self,order=2):
         self.fitLines()
         fit = np.zeros(order)
         if len(self.fitE)>order: # orthogonal distance regression
@@ -912,7 +945,7 @@ class tempGainDrift(object):
             halfWidth = max(50,np.std(fitPoints['ph']-phGuess))
             phGuess = np.polyval(guess,pls['temp'])
          self.gain = guess/self.calEnergy 
-    def pixelGain(self,pls,order=4):
+    def pixelGain(self,pls,order=4,doPlot=False):
          halfWidth = 100
          pixelGain = self.gain
          phGuess = self.calEnergy*np.polyval(pixelGain,pls['temp'])
@@ -922,12 +955,13 @@ class tempGainDrift(object):
          if len(fitPoints)>order:
              guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
              pixelGain = guess/self.calEnergy
-             mpl.scatter(pls['time'],pls['ph'],marker='+',lw=.2)
-             mpl.plot(self.t,np.polyval(guess,self.T),'r')
-             mpl.xlim(-100,900)
-             mpl.ylim(0,4000)
-             mpl.title("Pixel %d" % (np.unique(pls['pixel'])[0]))
-             mpl.show(block=True)
+             if doPlot:
+                 mpl.scatter(pls['time'],pls['ph'],marker='+',lw=.2)
+                 mpl.plot(self.t,np.polyval(guess,self.T),'r')
+                 mpl.xlim(-300,900)
+                 mpl.ylim(0,4000)
+                 mpl.title("Pixel %d" % (np.unique(pls['pixel'])[0]))
+                 mpl.show(block=True)
          return np.polyval(pixelGain,pls['temp'])             
             
 class singlePixel(object):
@@ -968,6 +1002,20 @@ class singlePixel(object):
         self._mask = mask
     def mask(self):
         return self._mask
+    def liveTime(self,timeRange):
+        if timeRange is None:
+            s1 = 0
+            s2 = len(self._mask)
+        else:
+            s1 = self.sampleForTTime(timeRange[0])
+            s2 = self.sampleForTTime(timeRange[1])
+        return np.sum(self._mask[s1:s2])/self._sampleRate
+    def liveTimePercentage(self,timeRange):
+        if timeRange is None:
+            totTime = len(self._mask)/self._sampleRate
+        else:
+            totTime = timeRange[1] - timeRange[0]
+        return self.liveTime(timeRange)/float(totTime)
     def data(self):
         return self._data
     def pulses(self):
@@ -1356,7 +1404,7 @@ class singlePixel(object):
     def nonLinGain(self):
         pulseHeights = self._pulses['ph']
         lines = spectralLines(pulseHeights)  
-        coefs = lines.nonLinGain()
+        coefs = lines.eNonLin()
         if np.any(coefs):
             self._pulses['lin'] = coefs[0]
             self._pulses['quad'] = coefs[1]
@@ -1471,6 +1519,24 @@ def dataFunction(segmentLength, dictionaryList, *params):
                 function[segmentStart:segmentStop] += amplitude * templateToAdd
         yValues = np.append(yValues, function)
     return yValues
+    
+def dts(times,tMin=.005,tMax=.2,bins=1950):
+    poptot = np.diff(times)
+    data1 = poptot[:-3]
+    fity1,fitx1 =  np.histogram(data1,range=[tMin,tMax],bins=bins)
+    fitx1 = fitx1[:-1]
+    data2 = (poptot[:-1]+poptot[1:])[:-2]
+    fity2,fitx2 =  np.histogram(data2,range=[tMin,tMax],bins=bins)
+    fitx2 = fitx2[:-1]+fitx1[-1]
+    data3 = (poptot[:-2]+poptot[2:]+poptot[1:-1])[:-1]
+    fity3,fitx3 =  np.histogram(data3,range=[tMin,tMax],bins=bins)
+    fitx3 = fitx3[:-1]+fitx2[-1]
+    data4 = poptot[:-3]+poptot[1:-2]+poptot[2:-1]+poptot[3:]
+    fity4,fitx4 =  np.histogram(data4,range=[tMin,tMax],bins=bins)
+    fitx4 = fitx4[:-1]+fitx3[-1]
+    fitx = np.block([fitx1,fitx2,fitx3,fitx4])
+    fity = np.block([fity1,fity2,fity3,fity4])
+    return fitx, fity
     
 def fftShift(inArray, sampleShift, sampleForPulseArrival):
     inLength = len(inArray)
@@ -1638,6 +1704,11 @@ def fitFunction(x, segmentLength, dictionaryList, *params):
     totalFunction = dataFunction(segmentLength, dictionaryList, *params)    
     return totalFunction[x]
     
+def fitGamma(dt,a=1,loc=0):
+    scale = sts.gamma.fit(dt,floc=loc,fa=a)[2]
+    rate = 1./scale
+    return rate
+    
 def fitGaussWBG(x, *params):
     mu = params[0]
     sig = params[1]
@@ -1654,6 +1725,29 @@ def fitPolyBkwd(B,x):
     for i in range(len(B)):
         func += B[i] * np.power(x,i+1)
     return func
+    
+def fitStats(times,tMin=.005,tMax=.2,bins=1950,doPlot=False):
+    times.sort()
+    deltaT = times[-1]-times[0]
+    fitx,fity = dts(times,tMin=tMin,tMax=tMax,bins=bins)
+    sigma = np.sqrt(fity)
+    sigma[np.where(sigma==0)] = 1
+    fity = fity/deltaT
+    sigma = sigma/deltaT
+    lmdatot = len(times)/deltaT
+    guess = np.array([lmdatot,0,0,0])
+    popt,pcov = curve_fit(statModel,fitx,fity,p0=guess,sigma=sigma,
+                          absolute_sigma=True,bounds=(0,np.inf))
+    rates = popt    
+    if doPlot:
+        print rates
+        mpl.step(fitx,fity,where='post',label='Data')
+        mpl.step(fitx,statModel(fitx,*popt),where='post',lw=2,c='red',label='Best Fit')
+        mpl.legend(loc='best')
+        mpl.xlabel('dt (sec)')
+        mpl.ylabel('PDF')
+        mpl.show(block=True)
+    return rates
     
 def FWHM(xdata, ydata, xpos):
     try:
@@ -1673,6 +1767,13 @@ def FWHM(xdata, ydata, xpos):
     except ValueError:
         print "ERROR: NO MAXIMUM IN DATA"
         return xdata[-1] - xdata[0]
+        
+def gammaDist(x,*params):
+    binsize = np.diff(x)[0]
+    x = np.append(x,x[-1]+binsize)
+    ltot = params[0]
+    norm = ltot
+    return norm*np.diff(sts.gamma.cdf(x,a=1,scale=1./ltot))
         
 def halfCosWindow(inArray, halfCosFraction):
     window = np.ones(len(inArray))
@@ -1819,6 +1920,26 @@ def pulseHeights(dataSegment,positions,discriminator=0):
         pulseHeights = np.append(pulseHeights,ph)
     return pulseHeights
     
+def randTimes(params,deltaT=1000,lmdadiff=5000):
+    # deltaT = time in seconds to simulate
+    #lmdadiff = effective rate of inter-double spacing in Hz
+    alltms = np.array([])
+    for i in range(len(params)):
+        if params[i]>0:
+            lmda = params[i]
+            size = sts.poisson.rvs(deltaT*lmda)
+            pop = sts.gamma.rvs(1,size=size,scale=1./lmda) # equivalent to time separations 
+            popdiff = sts.gamma.rvs(1,size=i*size,scale=1./lmdadiff)  
+            popdiff = np.append(np.zeros(size),popdiff)
+        else:
+            pop = np.array([])
+            popdiff = np.array([])
+        tms = np.cumsum(pop)
+        tms = np.tile(tms,i+1)
+        tms += popdiff
+        alltms = np.append(alltms,tms)   
+    return np.sort(alltms)
+    
 def removeSaturatedPulses(data,positions,fade=512,searchWindow=65536,
                           minSeparation=8192):
     dataLen = len(data)
@@ -1943,6 +2064,48 @@ def signalAndNoiseLoc(inArray, filLen):
     signalLoc = pulseLocations[np.where((pre>5*filLen/4)&(post>3*filLen/4))]
     noiseLoc = pulseLocations[np.where(pre>9*filLen/4)]-5*filLen/4
     return signalLoc, noiseLoc
+    
+def statModel(x,*params): 
+    assert(len(x)%4==0)
+    binsize = np.diff(x)[0]
+    i1,i2,i3 = len(x)/4,len(x)/2,3*len(x)/4
+    x1 = x[:i1]
+    x2 = x[i1:i2]
+    x3 = x[i2:i3]
+    x4 = x[i3:]
+    x0 = x1[0]
+    ltot = np.sum(params) # l1 + l2 + l3 + l>3
+    x1 = np.append(x1,x1[-1]+binsize)
+    y1 = (ltot)*np.diff(sts.gamma.cdf(x1,a=1,scale=1./ltot))
+    l1 = params[0]
+    n21 = (l1*ltot**2)/(ltot**2)
+    lt1 = ltot-l1
+    n22 = (2*ltot*lt1)/(ltot)
+    x2 = np.append(x2,x2[-1]+binsize)
+    y2 = n21*np.diff(sts.gamma.cdf(x2,a=2,scale=1./ltot,loc=x2[0]-x0))
+    y2 += n22*np.diff(sts.gamma.cdf(x2,a=1,scale=1./ltot,loc=x2[0]-x0))
+    l2 = params[1]
+    n31 = (l1**2*ltot**2)/(ltot**3)
+    n32 = (l2*ltot**2 + 2*l1*lt1*ltot)/(ltot**2) 
+    lt12 = ltot-l1-l2
+    n33 = (lt1**2 + 2*lt12*ltot)/(ltot)
+    x3 = np.append(x3,x3[-1]+binsize)
+    y3 = n31*np.diff(sts.gamma.cdf(x3,a=3,scale=1./ltot,loc=x3[0]-x0)) 
+    y3 += n32*np.diff(sts.gamma.cdf(x3,a=2,scale=1./ltot,loc=x3[0]-x0)) 
+    y3 += n33*np.diff(sts.gamma.cdf(x3,a=1,scale=1./ltot,loc=x3[0]-x0)) 
+    l3 = params[2]
+    n41 = (l1**3*ltot**2)/(ltot**4)
+    n42 = (2*ltot*lt1*l1**2 + 2*l1*l2*ltot**2)/(ltot**3)
+    n43 = (l3*ltot**2 + 2*l2*lt1*ltot + 2*l1*lt12*ltot + l1*lt1**2)/(ltot**2)
+    lt123 = ltot-l1-l2-l3
+    n44 = (2*ltot*lt123 + 2*lt1*lt12)/(ltot)
+    x4 = np.append(x4,x4[-1]+binsize)
+    y4 = n41*np.diff(sts.gamma.cdf(x4,a=4,scale=1./ltot,loc=x4[0]-x0))
+    y4 += n42*np.diff(sts.gamma.cdf(x4,a=3,scale=1./ltot,loc=x4[0]-x0)) 
+    y4 += n43*np.diff(sts.gamma.cdf(x4,a=2,scale=1./ltot,loc=x4[0]-x0))
+    y4 += n44*np.diff(sts.gamma.cdf(x4,a=1,scale=1./ltot,loc=x4[0]-x0))
+    y = np.block([y1,y2,y3,y4])   
+    return y
     
 def trigger(dataSegment):
     trig = triggerChannel(dataSegment)
