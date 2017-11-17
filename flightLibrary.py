@@ -895,10 +895,11 @@ class spectralLines(object):
             
 class tempGainDrift(object):
     def __init__(self,iFile,calEnergy=3313.8):
-        self.t,self.T = np.transpose(np.loadtxt(iFile))[([0,2],)]      
+        self.t,self.T = np.transpose(np.loadtxt(iFile))[([0,2],)]   
+        self.T = 1000.*self.T # mK
         self.calEnergy = calEnergy
     def eventTemps(self,times):
-        return 1000.*np.interp(times,self.t,self.T)
+        return np.interp(times,self.t,self.T)
     def globalGain(self,pls,order=4):
          halfWidth = 1000
          phGuess = self.calEnergy*np.ones(len(pls))
@@ -921,9 +922,11 @@ class tempGainDrift(object):
          if len(fitPoints)>order:
              guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
              pixelGain = guess/self.calEnergy
-             mpl.scatter(fitPoints['temp'],fitPoints['ph'],marker='+',lw=.2)
-             x = np.arange(49,55,.1)
-             mpl.plot(x,np.polyval(guess,x),'r')
+             mpl.scatter(pls['time'],pls['ph'],marker='+',lw=.2)
+             mpl.plot(self.t,np.polyval(guess,self.T),'r')
+             mpl.xlim(-100,900)
+             mpl.ylim(0,4000)
+             mpl.title("Pixel %d" % (np.unique(pls['pixel'])[0]))
              mpl.show(block=True)
          return np.polyval(pixelGain,pls['temp'])             
             

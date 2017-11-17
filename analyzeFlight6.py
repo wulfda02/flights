@@ -30,52 +30,52 @@ if not os.path.isfile(fn):
     timing.correctedFlightTiming()
     
 
-for pixel in pixels:
-    print run, pixel
-
-    # Load data for pixel from hdf5 file
-    pxlObj = fl.singlePixel(run,pixel)
-    pxlObj.loadFromHdf('bsn')
-    
-    # Make optimum filters
-    filters = pxlObj.getFilter()
-    if filters is None:
-        print "Bad Pixel: Unable To Make Filter"
-        continue
-    if (filters.bslnRes()>15)and(pixel!=18):
-        print "Bad Pixel: Poor Resolution"
-        continue
-        
-    # Convolve filters with data
-    pxlObj.filterData(filters)
-    
-    # Fit filtered data
-    pxlObj.fitFilteredData(filters)
-    
-    # Save fit to hdf5 file
-    pxlObj.writeHdfFit('bsn')
+#for pixel in pixels:
+#    print run, pixel
+#
+#    # Load data for pixel from hdf5 file
+#    pxlObj = fl.singlePixel(run,pixel)
+#    pxlObj.loadFromHdf('bsn')
+#    
+#    # Make optimum filters
+#    filters = pxlObj.getFilter()
+#    if filters is None:
+#        print "Bad Pixel: Unable To Make Filter"
+#        continue
+#    if (filters.bslnRes()>15)and(pixel!=18):
+#        print "Bad Pixel: Poor Resolution"
+#        continue
+#        
+#    # Convolve filters with data
+#    pxlObj.filterData(filters)
+#    
+#    # Fit filtered data
+#    pxlObj.fitFilteredData(filters)
+#    
+#    # Save fit to hdf5 file
+#    pxlObj.writeHdfFit('bsn')
         
 # Apply temperature-corrected non-linear gain scale
 runObj = fl.allPixels(run)
 runObj.eScale()
 
-#import matplotlib.pyplot as mpl
-#import numpy as np
-#flightTimes = {'rail':(-1740,-540),'onSky':(185,436),
-#               'gvClose':(440,505),'chute':(706,920)}
-#p = runObj.pulses()
-#
-#p.sort(order='time')
-#plsSep = np.diff(p['time'])
-#preSep = np.append(np.inf,plsSep)
-#postSep = np.append(plsSep,np.inf)
-#minSep = np.minimum(preSep,postSep)
-#p = p[((p['resolution']==0)&(p['time']>flightTimes['onSky'][0])
-#       &(p['time']<flightTimes['onSky'][1])&(minSep>.005)&(np.abs(p['shape']-1)<.05))]
+import matplotlib.pyplot as mpl
+import numpy as np
+flightTimes = {'rail':(-1740,-540),'onSky':(185,436),
+               'gvClose':(440,505),'chute':(706,920)}
+p = runObj.pulses()
 
-#badPixels = [9,18,28,32,33]
-#for b in badPixels:
-#    p = p[(p['pixel']!=b)]
+p.sort(order='time')
+plsSep = np.diff(p['time'])
+preSep = np.append(np.inf,plsSep)
+postSep = np.append(plsSep,np.inf)
+minSep = np.minimum(preSep,postSep)
+p = p[((p['resolution']==0)&(p['time']>flightTimes['onSky'][0])
+       &(p['time']<flightTimes['onSky'][1])&(minSep>.005)&(np.abs(p['shape']-1)<.05))]
+
+badPixels = [9,18,28,32,33]
+for b in badPixels:
+    p = p[(p['pixel']!=b)]
 #
 #p.sort(order=('pixel','time'))
 #plsSep = np.diff(p['time'])
@@ -84,7 +84,7 @@ runObj.eScale()
 #minSep = np.minimum(preSep,postSep)
 #p = p[(minSep>.1)]
               
-#mpl.hist(p['energy'],range=[0,4000],bins=1600,histtype='step')
-#mpl.show(block=True)
+mpl.hist(p['energy'],range=[0,4000],bins=1600,histtype='step')
+mpl.show(block=True)
 
 
