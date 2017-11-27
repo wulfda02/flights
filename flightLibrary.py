@@ -15,6 +15,7 @@ import scipy.stats as sts
 import time
 import os
 import h5py
+import subprocess
 
 
 ##############################################################################
@@ -220,13 +221,12 @@ class filterObject(object): # object for making, storing, and using filters and 
         self._plsTemplates = None
         self._phTemplates = None
         self._ptTemplates = None
-        self.make() # fills in all the 'None' above
     def setCalenergy(self,calEnergy):
         self.calEnergy = calEnergy
-        self.make()
+        self.makeTemplates()
     def setSampleRate(self,sampleRate):
         self.fs = sampleRate
-        self.make()
+        self.makeTemplates()
     def filterLength(self):
         return len(self.avgSig)
     def templateLength(self):
@@ -307,7 +307,7 @@ class filterObject(object): # object for making, storing, and using filters and 
             shiftedTemplate = fftShift(tmplt,decimal,sfpa)
             templateDict[decimal] = shiftedTemplate
         return templateDict 
-    def make(self):
+    def makeTemplates(self):
         self.makeFilters()
         self._phTemplates = self.tmpltDict(self.phFilterTemplate())
         self._ptTemplates = self.tmpltDict(self.ptFilterTemplate())
@@ -823,15 +823,16 @@ class allPixels(object):
         if self.run=='k8r61':
             dt2 = 0.002
             fov = 0.809259 # cosine weighted 30.5 degree radius fov in sr
-            pArea = .04 # area of one pixel in cm^2
+            pxlArea = .04 # area of one pixel in cm^2
             effArea = 0
             exposure = 0
-            skyTime = (185,436)
+            skyTime = (185,436) # T-time of observation
             badPixels = np.array([9,18,28,32,33],dtype=int)
             goodPixels = np.setdiff1d(self.pixels(),badPixels)
             skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
                                     &(self.pulses()['time']<skyTime[1]))]
             goodPls = np.array([],dtype=skyPls.dtype)
+            rsltns = []
             skyPls.sort(order='time')
             rates = fitStats(skyPls['time'])
             lmdaTot = np.sum(rates)
@@ -844,14 +845,57 @@ class allPixels(object):
                 pxlObj = singlePixel(self.run,p)
                 pxlObj.loadFromHdf('bsn')
                 LT = pxlObj.liveTime(skyTime)
-                effArea += fov*pArea
+                effArea += fov*pxlArea
                 exposure += eff2*LT
+                rsltn = pxlObj.bslnRes()
+                rsltns.append(rsltn)
                 pxlPls = skyPls[((skyPls['pixel']==p)&(minPxlSep>dt2)
                                  &(skyPls['resolution']==0))]
                 goodPls = np.append(goodPls,pxlPls)
-            
-            
-                                                                   
+            netRsltn = np.mean(rsltns)
+            obsObj = observation(self.run)
+            obsObj.setEvents(goodPls,effArea,exposure,netRsltn)
+            return obsObj
+                
+class observation(object):
+    def __init__(self,run):
+        self.run = run
+        self._effArea = 0
+        self._livetime = 0
+        self._rsltn = None
+        self._events = None
+    def setEvents(self,events,effArea,livetime,resolution):
+        self._events = events
+        self._effArea = effArea
+        self._livetime = livetime
+        self._rsltn = resolution
+    def genrsp(self,chan_low,chan_high,chan_number):
+        fwhm = 0.001*self._rsltn
+        resp_low = round(chan_low-fwhm,3)
+        resp_high = round(chan_high+fwhm,3)
+        resp_number = int(1000*(resp_high-resp_low))
+        rmffil = "%s.rmf" % self.run
+        if self.run=='k8r61':
+            tlscpe = "XQC"
+            instrm = "XQC6"
+        tmplt = open('genrsp.tmplt','r')
+        lines = tmplt.readlines()
+        cmd = lines[-1]
+        tpl = (resp_number,resp_low,resp_high,chan_number,chan_low,chan_high,
+               rmffil,fwhm,tlscpe,instrm)
+        fn = "%s_genrsp.xcm" % self.run
+        outFile = open(fn,'w')
+        outFile.write(cmd % tpl)
+        tmplt.close()
+        outFile.close()
+        subprocess.call("xspec %s" % fn, shell=True)
+    def spectrum(self,eRange,binSize): # create xspec files
+        chan_number = int((eRange[1]-eRange[0])//binSize)
+        hy,hx = np.histogram(self._events['energy'],range=eRange,
+                             bins=chan_number)   
+        chan_low = 0.001*hx[0]
+        chan_high = 0.001*hx[-1]
+        self.genrsp(chan_low,chan_high,chan_number)
  
 class spectralLines(object):
     def __init__(self, pulseHeights):
@@ -925,7 +969,7 @@ class spectralLines(object):
                     mat[i,j] = self.fitE[i]**(j+1)
             fit = np.linalg.solve(mat,vec)
         return fit           
-            
+        
 class tempGainDrift(object):
     def __init__(self,iFile,calEnergy=3313.8):
         self.t,self.T = np.transpose(np.loadtxt(iFile))[([0,2],)]   
@@ -1002,6 +1046,10 @@ class singlePixel(object):
         self._mask = mask
     def mask(self):
         return self._mask
+    def bslnRes(self):
+        if self.haveFilter():
+            fo = filterObject(self._avgPulse,self._noise2,self.sampleRate())
+            return fo.bslnRes()
     def liveTime(self,timeRange):
         if timeRange is None:
             s1 = 0
@@ -1274,6 +1322,7 @@ class singlePixel(object):
             self.makeFilter(filterLength)
         if self.goodFilter():
             fo = filterObject(self._avgPulse,self._noise2,self.sampleRate())
+            fo.makeTemplates()
             if self.interactive:
                 plotSignalNoise(fo.avgSig,fo.avgNos,fo.fs)
                 plotFilters(fo._phFilter,fo._ptFilter,fo.fs)
