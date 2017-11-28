@@ -875,8 +875,8 @@ class observation(object):
         resp_high = round(chan_high+fwhm,3)
         resp_number = int(1000*(resp_high-resp_low))
         rmffil = "%s.rmf" % self.run
+        tlscpe = "XQC"
         if self.run=='k8r61':
-            tlscpe = "XQC"
             instrm = "XQC6"
         tmplt = open('genrsp.tmplt','r')
         lines = tmplt.readlines()
