@@ -847,12 +847,12 @@ class allPixels(object):
                 LT = pxlObj.liveTime(skyTime)
                 effArea += fov*pxlArea
                 exposure += eff2*LT
-                rsltn = pxlObj.bslnRes()
-                rsltns.append(rsltn)
                 pxlPls = skyPls[((skyPls['pixel']==p)&(minPxlSep>dt2)
                                  &(skyPls['resolution']==0))]
+                rsltn = pxlObj.bslnRes()
+                rsltns.append(rsltn*len(pxlPls)) # terms of weighted sum
                 goodPls = np.append(goodPls,pxlPls)
-            netRsltn = np.mean(rsltns)
+            netRsltn = np.sum(rsltns)/len(goodPls) # weighted average
             obsObj = observation(self.run)
             obsObj.setEvents(goodPls,effArea,exposure,netRsltn)
             return obsObj
@@ -884,11 +884,25 @@ class observation(object):
         tpl = (resp_number,resp_low,resp_high,chan_number,chan_low,chan_high,
                rmffil,fwhm,tlscpe,instrm)
         fn = "%s_genrsp.xcm" % self.run
-        outFile = open(fn,'w')
-        outFile.write(cmd % tpl)
+        outfile = open(fn,'w')
+        outfile.write(cmd % tpl)
         tmplt.close()
-        outFile.close()
+        outfile.close()
         subprocess.call("xspec %s" % fn, shell=True)
+    def genpha(self,histy,histx):
+        txtfile = "%s.txt" % self.run
+        outfile = "%s.pha" % self.run
+        header_list = ["line1", "line2"]
+        header_rows = len(header_list)
+        header ='\n'.join(header_list)
+        np.savetxt(txtfile,histy,fmt='%d',header=header)
+        detchans = len(histx)
+        telescope = "XQC"
+        tmplt = open('genrsp.tmplt','r')
+        lines = tmplt.readlines()
+        cmd = lines[-1]
+        tpl = (infile,outfile,header_rows,detchans,telecope,instrume,detnam,
+               filt,exposure,respfile)
     def spectrum(self,eRange,binSize): # create xspec files
         chan_number = int((eRange[1]-eRange[0])//binSize)
         hy,hx = np.histogram(self._events['energy'],range=eRange,
