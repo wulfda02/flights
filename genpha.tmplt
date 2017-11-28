@@ -173,4 +173,5 @@
 #    NASA/GSFC
 #    http://heasarc.gsfc.nasa.gov/cgi-bin/ftoolshelp
 #    (301) 286-6115
-    
+#    
+ascii2pha infile=%s outfile=%s chanpres=no dtype=1

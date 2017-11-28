@@ -874,7 +874,7 @@ class observation(object):
         resp_low = round(chan_low-fwhm,3)
         resp_high = round(chan_high+fwhm,3)
         resp_number = int(1000*(resp_high-resp_low))
-        rmffil = "%s.rmf" % self.run
+        rmffil = "%s.rsp" % self.run
         tlscpe = "XQC"
         if self.run=='k8r61':
             instrm = "XQC6"
