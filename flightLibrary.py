@@ -864,6 +864,8 @@ class observation(object):
         self._livetime = 0
         self._rsltn = None
         self._events = None
+    def pixels(self):
+        return np.unique(self._events['pixel'])
     def setEvents(self,events,effArea,livetime,resolution):
         self._events = events
         self._effArea = effArea
@@ -888,21 +890,26 @@ class observation(object):
         outfile.write(cmd % tpl)
         tmplt.close()
         outfile.close()
-        subprocess.call("xspec %s" % fn, shell=True)
-    def genpha(self,histy,histx):
-        txtfile = "%s.txt" % self.run
+        subprocess.call(["xspec", fn])
+    def genpha(self,histy):
+        infile = "%s.txt" % self.run
         outfile = "%s.pha" % self.run
-        header_list = ["line1", "line2"]
-        header_rows = len(header_list)
-        header ='\n'.join(header_list)
-        np.savetxt(txtfile,histy,fmt='%d',header=header)
-        detchans = len(histx)
+        np.savetxt(infile,histy,fmt='%d')
+        detchans = len(histy)
         telescope = "XQC"
-        tmplt = open('genrsp.tmplt','r')
+        if self.run=='k8r61':
+            instrume = "XQC6"
+            detnam = "XQC6"
+        exposure = self._livetime
+        respfile = "%s.rsp" % self.run
+        tmplt = open('genpha.tmplt','r')
         lines = tmplt.readlines()
         cmd = lines[-1]
-        tpl = (infile,outfile,header_rows,detchans,telecope,instrume,detnam,
-               filt,exposure,respfile)
+        tpl = (infile,outfile,detchans,telescope,instrume,detnam,
+               exposure,respfile)
+        print cmd % tpl
+        subprocess.call((cmd % tpl).split())
+        return outfile
     def spectrum(self,eRange,binSize): # create xspec files
         chan_number = int((eRange[1]-eRange[0])//binSize)
         hy,hx = np.histogram(self._events['energy'],range=eRange,
@@ -910,6 +917,8 @@ class observation(object):
         chan_low = 0.001*hx[0]
         chan_high = 0.001*hx[-1]
         self.genrsp(chan_low,chan_high,chan_number)
+        pha = self.genpha(hy)
+        return pha
  
 class spectralLines(object):
     def __init__(self, pulseHeights):
