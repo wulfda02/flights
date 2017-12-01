@@ -61,10 +61,10 @@ runObj = fl.allPixels(run)
 
 # Create on-target spectrum
 obsObj = runObj.selectEvents()
-phaFile = obsObj.spectrum([50,2000],2.5)
+phaFile = obsObj.spectrum([200,1000],2.5)
 
-import xspec as xs
-xs.Spectrum(phaFile)
+#import xspec as xs
+#xs.Spectrum(phaFile)
 #xs.Model("vmekal+wabs*(vmekal+bknpower+bknpower)")
 #xs.Fit.perform()
 #xs.Plot.device = "/xs"

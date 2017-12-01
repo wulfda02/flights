@@ -797,9 +797,11 @@ class allPixels(object):
                 pxlGain = gainObj.pixelGain(pxlPls)
                 pxlPls['gain'] = pxlGain
                 self.setPixelPulses(p,pxlPls)
-    def nonLin(self):
+    def nonLin(self,doPlot=False):
         if self.run=='k8r61':
             railTime = (-1740,-540)
+            chuteTime = (706,920)
+            skyTime = (185,436)
             for p in self.pixels():
                 pxlPls = self.pixelPulses(p)
                 railPxlPls = pxlPls[((pxlPls['time']>railTime[0])
@@ -807,27 +809,54 @@ class allPixels(object):
                                      &(pxlPls['resolution']==0))]
                 lines = spectralLines(railPxlPls['ph']/railPxlPls['gain'])
                 coefs = lines.eNonLin()
+                x = np.arange(4000)
+                y = fitPolyBkwd(coefs,x)
+                ph = np.interp(lines.realE,y,x)
+                if np.any(np.abs(lines.fitE-ph)>1.5):
+                    print p
+                if doPlot: 
+                    mpl.errorbar(lines.fitE-ph,lines.realE,
+                                 xerr=lines.fitEErr,fmt='o')
+                    mpl.ylabel('Energy (eV)')
+                    mpl.xlabel('Delta E (eV)')
+                    mpl.title('Pixel %d' % p)
+                    mpl.axvline(0)
+                    mpl.show(block=True)
                 if np.any(coefs):
                     pxlPls['lin'] = coefs[0]/pxlPls['gain']
                     pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
                     pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
-                                      + pxlPls['quad']*np.square(pxlPls['ph']))
+                                        +pxlPls['quad']*np.square(pxlPls['ph']))
                     self.setPixelPulses(p,pxlPls)
                 else: 
                     print "Unable To Fit Non-Linearities For Pixel %d" % p
+            railPls = self.pulses()[((self.pulses()['time']>railTime[0])
+                                     &(self.pulses()['time']<railTime[1])
+                                     &(self.pulses()['resolution']==0))]
+            skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
+                                     &(self.pulses()['time']<skyTime[1])
+                                     &(self.pulses()['resolution']==0))]
+            chutePls = self.pulses()[((self.pulses()['time']>chuteTime[0])
+                                     &(self.pulses()['time']<chuteTime[1])
+                                     &(self.pulses()['resolution']==0))]
+            mpl.hist(railPls['energy'],range=(0,4000),bins=1600,normed=True,histtype='step')
+            mpl.hist(chutePls['energy'],range=(0,4000),bins=1600,normed=True,histtype='step')
+            mpl.hist(skyPls['energy'],range=(0,4000),bins=1600,normed=True,histtype='step')
+            mpl.show(block=True)
     def eScale(self):
         self.gainDrift()
         self.nonLin()
         self.writeEvents()
-    def selectEvents(self):
+    def selectEvents(self,doPlot=True):
         if self.run=='k8r61':
-            dt2 = 0.002
+            dt2 = 0.001
             fov = 0.809259 # cosine weighted 30.5 degree radius fov in sr
             pxlArea = .04 # area of one pixel in cm^2
             effArea = 0
             exposure = 0
             skyTime = (185,436) # T-time of observation
-            badPixels = np.array([9,18,28,32,33],dtype=int)
+            #badPixels = np.array([9,18,28,32,33],dtype=int)
+            badPixels = np.array([18,26,29,35],dtype=int) # bad escales
             goodPixels = np.setdiff1d(self.pixels(),badPixels)
             skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
                                     &(self.pulses()['time']<skyTime[1]))]
@@ -891,6 +920,7 @@ class observation(object):
         tmplt.close()
         outfile.close()
         subprocess.call(["xspec", fn])
+        subprocess.call(["rm", fn])
     def genpha(self,histy):
         infile = "%s.txt" % self.run
         outfile = "%s.pha" % self.run
@@ -907,26 +937,30 @@ class observation(object):
         cmd = lines[-1]
         tpl = (infile,outfile,detchans,telescope,instrume,detnam,
                exposure,respfile)
-        print cmd % tpl
         subprocess.call((cmd % tpl).split())
+        subprocess.call(["rm", infile])
         return outfile
     def spectrum(self,eRange,binSize): # create xspec files
         chan_number = int((eRange[1]-eRange[0])//binSize)
         hy,hx = np.histogram(self._events['energy'],range=eRange,
                              bins=chan_number)   
-        chan_low = 0.001*hx[0]
-        chan_high = 0.001*hx[-1]
-        self.genrsp(chan_low,chan_high,chan_number)
-        pha = self.genpha(hy)
-        return pha
+        mpl.hist(self._events['energy'],range=eRange,bins=chan_number,histtype='stepfilled')
+        mpl.show(block=True)
+        #chan_low = 0.001*hx[0]
+        #chan_high = 0.001*hx[-1]
+        #self.genrsp(chan_low,chan_high,chan_number)
+        #pha = self.genpha(hy)
+        np.savetxt('flt6Spec.dat',np.transpose([hx[:-1]+binSize/2,hy]),fmt=['%.2f','%d'])
+        #return pha
  
 class spectralLines(object):
     def __init__(self, pulseHeights):
         self.ph = pulseHeights
-        self.binWidth = 5.
+        self.binWidth = 2.
         self.maxE = 4000.
-        self.gl = {'B':183.3, 'C':277.0, 'N':392.4, 'O':524.9, 'F':676.8, 
-                   'Ka':3313.8, 'Kb':3589.6}  
+        #self.gl = {'B':183.3, 'C':277.0, 'N':392.4, 'O':524.9, 'F':676.8, 
+        #           'Ka':3313.8, 'Kb':3589.6}  
+        self.gl = {'C':277.0,'O':524.9,'Ka':3313.8}    
         self.realE = np.array([])
         self.fitE = np.array([])
         self.fitEErr = np.array([])
@@ -942,7 +976,7 @@ class spectralLines(object):
         hy,hx = np.histogram(self.ph,range=rng,bins=bins)
         hx = hx[:-1] + 0.5*self.binWidth
         return hx,hy
-    def fitLine(self,lineID):
+    def fitLine(self,lineID,doPlot=False):
         guess = self.gl[lineID]
         halfWidth = 50.
         linePH = self.ph[np.abs(self.ph-guess)<halfWidth]
@@ -953,11 +987,15 @@ class spectralLines(object):
             hx,hy = self.histogram()
             yfit = hy[np.abs(hx-mu)<halfWidth]
             xfit = hx[np.abs(hx-mu)<halfWidth]
+            sigmaForFit = np.sqrt(yfit)
+            sigmaForFit[np.where(sigmaForFit==0)]=1
             if np.sum(yfit)>0:
                 amp = np.max(yfit)
                 guess = np.array([mu,sig,amp,0])
                 try:
                     popt, pcov = curve_fit(fitGaussWBG, xfit, yfit, p0=guess, 
+                                           sigma=sigmaForFit,
+                                           absolute_sigma=True, 
                                            bounds=(0,np.inf))
                     area = np.sqrt(2*np.pi)*popt[2]*popt[1]/self.binWidth
                     bkgdFlux = np.sqrt(popt[3]*(2*halfWidth)/self.binWidth)
@@ -965,6 +1003,12 @@ class spectralLines(object):
                         self.fitE = np.append(self.fitE,popt[0])
                         self.fitEErr = np.append(self.fitEErr,popt[1]/np.sqrt(area))
                         self.realE = np.append(self.realE,self.gl[lineID])
+                        if doPlot:
+                            mpl.title(lineID)
+                            mpl.step(xfit,yfit,where='mid')
+                            mpl.plot(xfit,fitGaussWBG(xfit,*popt))
+                            mpl.axvline(popt[0])
+                            mpl.show(block=True)
                 except RuntimeError:
                     pass
     def fitLines(self):
@@ -986,11 +1030,13 @@ class spectralLines(object):
         elif len(self.realE)==order: # analytic solution
             mat = np.zeros((order,order))
             vec = np.zeros(order)
+            xErr = np.zeros(order)
+            yErr = np.zeros(order)
             for i in range(order):
                 vec[i] = self.realE[i]
                 for j in range(order):
                     mat[i,j] = self.fitE[i]**(j+1)
-            fit = np.linalg.solve(mat,vec)
+            fit = np.linalg.solve(mat,vec) 
         return fit           
         
 class tempGainDrift(object):
@@ -1000,7 +1046,7 @@ class tempGainDrift(object):
         self.calEnergy = calEnergy
     def eventTemps(self,times):
         return np.interp(times,self.t,self.T)
-    def globalGain(self,pls,order=4):
+    def globalGain(self,pls,order=5):
          halfWidth = 1000
          phGuess = self.calEnergy*np.ones(len(pls))
          for i in range(5):
@@ -1012,15 +1058,22 @@ class tempGainDrift(object):
             halfWidth = max(50,np.std(fitPoints['ph']-phGuess))
             phGuess = np.polyval(guess,pls['temp'])
          self.gain = guess/self.calEnergy 
-    def pixelGain(self,pls,order=4,doPlot=False):
-         halfWidth = 100
+    def pixelGain(self,pls,order=5,doPlot=False):
+         halfWidth = 250
          pixelGain = self.gain
          phGuess = self.calEnergy*np.polyval(pixelGain,pls['temp'])
-         fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
-                          &(pls['temp']<55)&(pls['temp']>49)
-                          &(pls['resolution']==0))]
+         for i in range(3):
+             fitPoints = pls[((np.abs(pls['ph']-phGuess)<halfWidth)
+                              &(pls['temp']<55)&(pls['temp']>49)
+                              &(pls['resolution']==0))]
+             if len(fitPoints)>order:
+                 guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
+                 phGuess = np.polyval(guess,fitPoints['temp'])
+                 halfWidth = max(50,np.std(fitPoints['ph']-phGuess))
+                 phGuess = np.polyval(guess,pls['temp'])
+             else:
+                 break
          if len(fitPoints)>order:
-             guess = np.polyfit(fitPoints['temp'],fitPoints['ph'],order)
              pixelGain = guess/self.calEnergy
              if doPlot:
                  mpl.scatter(pls['time'],pls['ph'],marker='+',lw=.2)
