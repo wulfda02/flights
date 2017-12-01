@@ -57,11 +57,11 @@ if not os.path.isfile(fn):
 #        
 ## Apply temperature-corrected non-linear gain scale
 runObj = fl.allPixels(run)
-#runObj.eScale()
+runObj.eScale()
 
 # Create on-target spectrum
 obsObj = runObj.selectEvents()
-phaFile = obsObj.spectrum([200,1000],2.5)
+phaFile = obsObj.spectrum([100,3000],2.5)
 
 #import xspec as xs
 #xs.Spectrum(phaFile)

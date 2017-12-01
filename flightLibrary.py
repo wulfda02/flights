@@ -823,6 +823,15 @@ class allPixels(object):
                     mpl.axvline(0)
                     mpl.show(block=True)
                 if np.any(coefs):
+                    #a = coefs[0]
+                    #b = coefs[1]
+                    #calPH = np.roots([b,a,-3313.8]).max()
+                    #print calPH
+                    #calPH_raw = pxlPls['gain']*calPH
+                    #d = 1./(pxlPls['gain']*(1. + b*calPH_raw/a))
+                    #e = b*d/a
+                    #phCorr = d*pxlPls['ph'] + e*np.square(pxlPls['ph'])
+                    #pxlPls['energy'] = a*phCorr + b*np.square(phCorr)
                     pxlPls['lin'] = coefs[0]/pxlPls['gain']
                     pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
                     pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
@@ -946,12 +955,15 @@ class observation(object):
                              bins=chan_number)   
         mpl.hist(self._events['energy'],range=eRange,bins=chan_number,histtype='stepfilled')
         mpl.show(block=True)
-        #chan_low = 0.001*hx[0]
-        #chan_high = 0.001*hx[-1]
-        #self.genrsp(chan_low,chan_high,chan_number)
-        #pha = self.genpha(hy)
+        chan_low = 0.001*hx[0]
+        chan_high = 0.001*hx[-1]
+        self.genrsp(chan_low,chan_high,chan_number)
+        pha = self.genpha(hy)
+        print "livetime:", self._livetime
+        print "Area:", self._effArea
+        print "pixels:", len(self.pixels())
         np.savetxt('flt6Spec.dat',np.transpose([hx[:-1]+binSize/2,hy]),fmt=['%.2f','%d'])
-        #return pha
+        return pha
  
 class spectralLines(object):
     def __init__(self, pulseHeights):
