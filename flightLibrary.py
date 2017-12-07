@@ -862,8 +862,8 @@ class allPixels(object):
             fov = 0.809259 # cosine weighted 30.5 degree radius fov in sr
             pxlArea = .04 # area of one pixel in cm^2
             effArea = 0
-            skyTime = (185,436) # T-time of observation
-            exposure = skyTime[1] - skyTime[0]
+            skyTime = (185.,436.) # T-time of observation
+            exposure = skyTime[1]-skyTime[0]
             #badPixels = np.array([9,18,28,32,33],dtype=int)
             badPixels = np.array([18,26,29,35],dtype=int) # bad escales
             goodPixels = np.setdiff1d(self.pixels(),badPixels)
@@ -898,7 +898,7 @@ class observation(object):
     def __init__(self,run):
         self.run = run
         self._effArea = 0
-        self._livetime = 0
+        self._exposure = 0
         self._rsltn = None
         self._events = None
     def pixels(self):
@@ -906,24 +906,25 @@ class observation(object):
     def setEvents(self,events,effArea,livetime,resolution):
         self._events = events
         self._effArea = effArea
-        self._livetime = livetime
+        self._exposure = livetime
         self._rsltn = resolution
     def genfil(self,energies):
         inFile = open("data/%s_filterstack.dat" % self.run,"r")
-        outFile = "data/%s_filtertrans.dat" % self.run
+        outFile = "%s_filtertrans.dat" % self.run
         transmission = np.ones(len(energies))
         for aline in inFile:
-            lineList = aline.split()
-            params = [float(x) for x in lineList[:3]]
             f = IRFilter()
-            f.setParams(*params)
-            f.setPlastic(lineList[3])
-            f.setMesh(lineList[4])
+            f.loadFromString(aline)
             transmission = transmission*f.transmission(energies)
         np.savetxt(outFile,np.transpose([.001*energies,transmission]),
                    fmt='%.4f')
         return outFile
-    def genrsp(self,chan_low,chan_high,chan_number):
+    def geneff(self,energies):
+        effArea = self._effArea*np.ones(len(energies))
+        outFile = "%s_effarea.dat" % self.run
+        np.savetxt(outFile,np.transpose([.001*energies,effArea]),fmt='%.4f')
+        return outFile
+    def genrsp(self,chan_low,chan_high,chan_number,filfil='none',efffil='none'):
         fwhm = 0.001*self._rsltn
         resp_low = round(chan_low-fwhm,3)
         resp_high = round(chan_high+fwhm,3)
@@ -936,7 +937,7 @@ class observation(object):
         lines = tmplt.readlines()
         cmd = lines[-1]
         tpl = (resp_number,resp_low,resp_high,chan_number,chan_low,chan_high,
-               rmffil,fwhm,tlscpe,instrm)
+               rmffil,filfil,efffil,fwhm,tlscpe,instrm)
         fn = "%s_genrsp.xcm" % self.run
         outfile = open(fn,'w')
         outfile.write(cmd % tpl)
@@ -944,6 +945,8 @@ class observation(object):
         outfile.close()
         subprocess.call(["xspec", fn])
         subprocess.call(["rm", fn])
+        subprocess.call(["rm", filfil])
+        subprocess.call(["rm", efffil])
     def genpha(self,histy):
         infile = "%s.txt" % self.run
         outfile = "%s.pha" % self.run
@@ -953,7 +956,7 @@ class observation(object):
         if self.run=='k8r61':
             instrume = "XQC6"
             detnam = "XQC6"
-        exposure = self._livetime
+        exposure = self._exposure
         respfile = "%s.rsp" % self.run
         tmplt = open('genpha.tmplt','r')
         lines = tmplt.readlines()
@@ -969,13 +972,11 @@ class observation(object):
                              bins=chan_number)   
         chan_low = 0.001*hx[0] # convert to keV
         chan_high = 0.001*hx[-1]
-        self.genrsp(chan_low,chan_high,chan_number)
-        filFile = self.genfil(hx)
+        filfil = self.genfil(hx)
+        efffil = self.geneff(hx)
+        self.genrsp(chan_low,chan_high,chan_number,filfil=filfil,efffil=efffil)
         pha = self.genpha(hy)
-        print "livetime:", self._livetime
-        print "Area:", self._effArea
-        print "pixels:", len(self.pixels())
-        np.savetxt('flt6Spec.dat',np.transpose([hx[:-1]+binSize/2,hy]),fmt=['%.2f','%d'])
+        #np.savetxt('flt6Spec.dat',np.transpose([hx[:-1]+binSize/2,hy]),fmt=['%.2f','%d'])
         return pha
  
 class spectralLines(object):
@@ -1735,6 +1736,12 @@ class IRFilter(object):
         self.setMesh(mesh)
         self.fit()
         return self.printModel()
+    def loadFromString(self,parameterString):
+        lineList = parameterString.split()
+        params = [float(x) for x in lineList[:3]]
+        self.setParams(*params)
+        self.setPlastic(lineList[3])
+        self.setMesh(lineList[4])
 
 ##############################################################################
 # General Use Funciton Definitions 

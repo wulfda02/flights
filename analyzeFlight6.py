@@ -60,7 +60,7 @@ if not os.path.isfile(fn):
 runObj = fl.allPixels(run)
 #runObj.eScale()
 
-# IR filter stack
+## IR filter stack
 #filters = {'IDB':['11895-2.dat','polyimide','none'],
 #           'ODB':['ODB103_092013.dat','polyimide','none'],
 #           'I2K':['2K_30048-3.dat','polyimide','new'],
@@ -76,14 +76,15 @@ runObj = fl.allPixels(run)
 
 # Create on-target spectrum
 obsObj = runObj.selectEvents()
-phaFile = obsObj.spectrum([100,3000],2.5)
+phaFile = obsObj.spectrum([50,2000],2.5)
 
-#import xspec as xs
-#xs.Spectrum(phaFile)
-#xs.Model("vmekal+wabs*(vmekal+bknpower+bknpower)")
-#xs.Fit.perform()
-#xs.Plot.device = "/xs"
-#xs.Plot("data")
+# Xspec fitting
+import xspec as xs
+xs.Spectrum(phaFile)
+xs.Model("vmekal+wabs*(vmekal+bknpower+bknpower)")
+xs.Fit.perform()
+xs.Plot.device = "/xs"
+xs.Plot("data")
 
 
 
