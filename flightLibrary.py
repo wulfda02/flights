@@ -920,7 +920,9 @@ class observation(object):
             f.setPlastic(lineList[3])
             f.setMesh(lineList[4])
             transmission = transmission*f.transmission(energies)
-        np.savetxt(outFile,np.transpose([.001*energies,transmission]))
+        np.savetxt(outFile,np.transpose([.001*energies,transmission]),
+                   fmt='%.4f')
+        return outFile
     def genrsp(self,chan_low,chan_high,chan_number):
         fwhm = 0.001*self._rsltn
         resp_low = round(chan_low-fwhm,3)
@@ -965,12 +967,10 @@ class observation(object):
         chan_number = int((eRange[1]-eRange[0])//binSize)
         hy,hx = np.histogram(self._events['energy'],range=eRange,
                              bins=chan_number)   
-        mpl.hist(self._events['energy'],range=eRange,bins=chan_number,histtype='stepfilled')
-        mpl.show(block=True)
         chan_low = 0.001*hx[0] # convert to keV
         chan_high = 0.001*hx[-1]
         self.genrsp(chan_low,chan_high,chan_number)
-        self.genfil(hx)
+        filFile = self.genfil(hx)
         pha = self.genpha(hy)
         print "livetime:", self._livetime
         print "Area:", self._effArea

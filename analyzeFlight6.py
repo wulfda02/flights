@@ -12,6 +12,7 @@ warnings.filterwarnings("ignore",".*GUI is implemented.*")
 warnings.filterwarnings("ignore",".*Covariance of the parameters.*")
 warnings.filterwarnings("ignore",".*invalid value encountered*")
 warnings.filterwarnings("ignore",".*Polyfit may be poorly conditioned")
+warnings.filterwarnings("ignore",".*divide by zero encountered*")
 
 run = 'k8r61'
 pixels = range(36)
@@ -60,18 +61,18 @@ runObj = fl.allPixels(run)
 #runObj.eScale()
 
 # IR filter stack
-filters = {'IDB':['11895-2.dat','polyimide','none'],
-           'ODB':['ODB103_092013.dat','polyimide','none'],
-           'I2K':['2K_30048-3.dat','polyimide','new'],
-           'O2K':['2K105_082013.dat','polyimide','new'],
-           '130K':['130K116_082013.dat','polyimide','new'],
-           'RT':['RT114_092013.dat','polyimide','new']}
-filterStack = open("data/%s_filterstack.dat" % run,"w")
-for fid in filters:
-    f = filters[fid]
-    irf = fl.IRFilter()
-    filterStack.write(irf.fitFromFile(*f))
-filterStack.close()
+#filters = {'IDB':['11895-2.dat','polyimide','none'],
+#           'ODB':['ODB103_092013.dat','polyimide','none'],
+#           'I2K':['2K_30048-3.dat','polyimide','new'],
+#           'O2K':['2K105_082013.dat','polyimide','new'],
+#           '130K':['130K116_082013.dat','polyimide','new'],
+#           'RT':['RT114_092013.dat','polyimide','new']}
+#filterStack = open("data/%s_filterstack.dat" % run,"w")
+#for fid in filters:
+#    f = filters[fid]
+#    irf = fl.IRFilter()
+#    filterStack.write(irf.fitFromFile(*f))
+#filterStack.close()
 
 # Create on-target spectrum
 obsObj = runObj.selectEvents()
