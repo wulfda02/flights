@@ -33,6 +33,9 @@ m.setPars(.099,1.,0.,.0088*1e-14*cmPerPc/(4*np.pi),
           .018,
           .225,1.,0.,.0037*1e-14*cmPerPc/(4*np.pi),
           1.52,12.3)
+# freeze power law
+#m.powerlaw.PhoIndex.frozen = True
+#m.powerlaw.norm.frozen = True
 m.show()
 
 # perform fit
