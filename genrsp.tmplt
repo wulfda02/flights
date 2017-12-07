@@ -197,4 +197,5 @@
 #    
 #BUGS
 #
-genrsp resol_reln=CONSTANT dispers=no resp_reln=linear resp_number=%d resp_low=%.5f resp_high=%.5f chan_reln=linear chan_number=%d chan_low=%.5f chan_high=%.5f inrfil=none rmffil=%s filfil=none detfil=none efffil=none fwhm=%.5f tlscpe=%s instrm=%s max_elements=1000000 rsp_min=.00000001 clobber=yes
+#genrsp resol_reln=CONSTANT dispers=no resp_reln=linear resp_number=%d resp_low=%.5f resp_high=%.5f chan_reln=linear chan_number=%d chan_low=%.5f chan_high=%.5f inrfil=none rmffil=%s filfil=none detfil=none efffil=none fwhm=%.5f tlscpe=%s instrm=%s max_elements=1000000 rsp_min=.00000001 clobber=yes
+genrsp resol_reln=CONSTANT dispers=no resp_reln=linear resp_number=%d resp_low=%.5f resp_high=%.5f chan_reln=linear chan_number=%d chan_low=%.5f chan_high=%.5f inrfil=none rmffil=%s filfil=fil.dat detfil=eff.dat efffil=area.dat fwhm=%.5f tlscpe=%s instrm=%s max_elements=1000000 rsp_min=.00000001 clobber=yes

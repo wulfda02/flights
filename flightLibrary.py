@@ -862,8 +862,8 @@ class allPixels(object):
             fov = 0.809259 # cosine weighted 30.5 degree radius fov in sr
             pxlArea = .04 # area of one pixel in cm^2
             effArea = 0
-            exposure = 0
             skyTime = (185,436) # T-time of observation
+            exposure = skyTime[1] - skyTime[0]
             #badPixels = np.array([9,18,28,32,33],dtype=int)
             badPixels = np.array([18,26,29,35],dtype=int) # bad escales
             goodPixels = np.setdiff1d(self.pixels(),badPixels)
@@ -882,9 +882,8 @@ class allPixels(object):
             for p in goodPixels:
                 pxlObj = singlePixel(self.run,p)
                 pxlObj.loadFromHdf('bsn')
-                LT = pxlObj.liveTime(skyTime)
-                effArea += fov*pxlArea
-                exposure += eff2*LT
+                effTot = eff2*pxlObj.liveTimePercentage(skyTime)
+                effArea += effTot*fov*pxlArea
                 pxlPls = skyPls[((skyPls['pixel']==p)&(minPxlSep>dt2)
                                  &(skyPls['resolution']==0))]
                 rsltn = pxlObj.bslnRes()
@@ -909,6 +908,19 @@ class observation(object):
         self._effArea = effArea
         self._livetime = livetime
         self._rsltn = resolution
+    def genfil(self,energies):
+        inFile = open("data/%s_filterstack.dat" % self.run,"r")
+        outFile = "data/%s_filtertrans.dat" % self.run
+        transmission = np.ones(len(energies))
+        for aline in inFile:
+            lineList = aline.split()
+            params = [float(x) for x in lineList[:3]]
+            f = IRFilter()
+            f.setParams(*params)
+            f.setPlastic(lineList[3])
+            f.setMesh(lineList[4])
+            transmission = transmission*f.transmission(energies)
+        np.savetxt(outFile,np.transpose([.001*energies,transmission]))
     def genrsp(self,chan_low,chan_high,chan_number):
         fwhm = 0.001*self._rsltn
         resp_low = round(chan_low-fwhm,3)
@@ -955,9 +967,10 @@ class observation(object):
                              bins=chan_number)   
         mpl.hist(self._events['energy'],range=eRange,bins=chan_number,histtype='stepfilled')
         mpl.show(block=True)
-        chan_low = 0.001*hx[0]
+        chan_low = 0.001*hx[0] # convert to keV
         chan_high = 0.001*hx[-1]
         self.genrsp(chan_low,chan_high,chan_number)
+        self.genfil(hx)
         pha = self.genpha(hy)
         print "livetime:", self._livetime
         print "Area:", self._effArea
@@ -1550,6 +1563,178 @@ class singlePixel(object):
             print "Non-Linear Gain Correction Applied"
         else: 
             print "Unable To Fit Non-Linearities"        
+            
+class IRFilter(object):
+    def __init__(self):
+        self._pl = 'parylene'
+        self._mesh = 'none'
+        self._gl = {'B':183.3, 'C':277.0, 'N':392.4, 'O':524.9, 'F':676.8, 
+                   'Ka':3313.8, 'Kb':3589.6} 
+        self._alBF = None # Best fit thicknesses in A
+        self._plBF = None
+        self._oxBF = None
+        self._e = np.array([]) # energies of transmission measurements
+        self._t = np.array([]) # measured transmissions
+        self._s = np.array([]) # transmission uncertainties
+        # NOTE: The following files contain column depths corresponding to 
+        # 1 optical depth in units of g/cm^2. NOT attenuation lengths
+        self._alLen = np.loadtxt('data/length/Al_smith.len') 
+        self._oxLen = np.loadtxt('data/length/O.len')
+        self._siLen = np.loadtxt('data/length/Si.len')
+        self.setPlastic(self._pl)
+    def setMesh(self,mesh):
+        self._mesh = mesh
+    def setPlastic(self,plastic):
+        self._pl = plastic
+        if self._pl.lower() == 'parylene':
+            self._plLen = np.loadtxt('data/length/Parylene.len')
+        elif self._pl.lower() == 'polyimide':
+            self._plLen= np.loadtxt('data/length/PI.len')
+    def setParams(self,al,pl,ox): # Thicknesses in Angstroms
+        self._alBF = al
+        self._plBF = pl
+        self._oxBF = ox
+    # Provide transmission measurement file
+    # Will append to existing transmission measurements
+    def loadTransmission(self,filename):
+        ext = filename.split('.')[-1]
+        inFile = open('data/%s' % filename,'r')
+        if ext=='dat': # Phillipe-style file
+            for aline  in inFile:
+                lineList = aline.split()
+                if len(lineList)>0:
+                    if lineList[0].upper() in self._gl.keys():
+                        e = self._gl[lineList[0].upper()]
+                        Topen = float(lineList[1])
+                        Tfilter = float(lineList[2])
+                        Bkgd = float(lineList[3])
+                        t = (Tfilter - Bkgd)/(Topen - Bkgd)
+                        uNum = np.sqrt(Tfilter + Bkgd)/(Tfilter - Bkgd)
+                        uDen = np.sqrt(Topen + Bkgd)/((Topen - Bkgd))
+                        s = t*np.sqrt(uNum**2 + uDen**2)
+                        self._e = np.append(self._e,e)
+                        self._t = np.append(self._t,t)
+                        self._s = np.append(self._s,s)    
+        elif (ext=='txt') or (ext=='mid'): # gerenic 3-column file
+            for aline  in inFile:
+                lineList = aline.split()
+                if len(lineList)>=3:
+                    e = float(lineList[0])
+                    t = float(lineList[1])
+                    s = float(lineList[2])
+                    self._e = np.append(self._e,e)
+                    self._t = np.append(self._t,t)
+                    self._s = np.append(self._s,s) 
+    def alTrans(self,e,t):    
+        alRo = 2.70 # g/cm^3
+        # convert column depth to thickness in Angstroms
+        alAt = (10**8)*np.interp(e,self._alLen[:,0],self._alLen[:,1])/alRo 
+        return np.exp(-1.*t/alAt)
+    def plTrans(self,e,t):
+        if self._pl.lower() == 'parylene':
+            plRo = 1.29
+        elif self._pl.lower() == 'polyimide':
+            plRo = 1.43
+        plAt = (10**8)*np.interp(e,self._plLen[:,0],self._plLen[:,1])/plRo
+        return np.exp(-1.*t/plAt)
+    def oxTrans(self,e,t):
+        al2o3Ro = 3.95
+        OMassFrac = 0.47
+        AlMassFrac = .53
+        oxAt = (10**8)*np.interp(e,self._oxLen[:,0],self._oxLen[:,1])/(al2o3Ro*OMassFrac)
+        alAt = (10**8)*np.interp(e,self._alLen[:,0],self._alLen[:,1])/(al2o3Ro*AlMassFrac)
+        return np.exp(-1.*t/oxAt - 1.*t/alAt)
+    def siTrans(self,e,t):
+        siRo = 2.33
+        # convert column depth to thickness in um
+        siAt = (10**4)*np.interp(e,self._siLen[:,0],self._siLen[:,1])/siRo
+        return np.exp(-1.*t/siAt)
+    def weightedAvgTrans(self,normalTransmission,maxTheta=30.5): # maxTheta in degrees
+        thetaMax = maxTheta*np.pi/180.
+        if thetaMax>0:
+            dTheta = thetaMax/50000.
+            theta = np.arange(0,thetaMax,dTheta).reshape((-1,1))
+            # Normalized weights
+            weight = 2*np.tan(theta)/np.square(np.tan(thetaMax)*np.cos(theta))
+            # log of transmission gives sum of optical depths
+            # increase all depths by dividing by cos(theta)
+            # put new depths back into exponent
+            transTheta = np.exp(np.log(normalTransmission)/np.cos(theta))
+            # weight and integrate over theta
+            averageTrans = np.trapz(weight*transTheta,dx=dTheta,axis=0)
+        else:
+            averageTrans = normalTransmission
+        return averageTrans
+    def meshTrans(self,e,theta):
+        if self._mesh == 'new':
+            f = .04 # 4% filling factor
+        elif self._mesh == 'old':
+            f = .02 # 2% filling factor
+        # 200 um thick course
+        course = self.weightedAvgTrans(self.siTrans(e,200.),maxTheta=theta)
+        # 8 um thick fine
+        fine = self.weightedAvgTrans(self.siTrans(e,8.),maxTheta=theta)
+        return (1.-f*(1.-course))*(1.-f*(1.-fine))
+    def filterModel(self,e,theta,*params):
+        al = params[0] # aluminum thickness
+        pl = params[1] # plastic thickness
+        if len(params)>2:
+            ox = params[2] # oxide thickness
+        else:
+            ox = 50. # fixed to 50 angstroms
+        normalFilm = (self.alTrans(e,al)*self.plTrans(e,pl)
+                      *self.oxTrans(e,ox))
+        averageFilm = self.weightedAvgTrans(normalFilm,maxTheta=theta)
+        if (self._mesh=='new')or(self._mesh=='old'):
+            averageMesh = self.meshTrans(e,theta)
+        else:
+            averageMesh = 1
+        return averageMesh*averageFilm  
+    def printModel(self):
+        model = [str(self._alBF),str(self._plBF),str(self._oxBF),
+                 self._pl,self._mesh,'\n']
+        return " ".join(model)
+    def transmission(self,energy):
+        p = [self._alBF,self._plBF,self._oxBF]
+        return self.filterModel(energy,30.5,*p)
+    def fit(self,doPlot=False):
+        alInitialGuess = 200. # initial guess of aluminum thickness in angstroms
+        plInitialGuess = 500. # initial guess of polyimide thickness in angstroms
+        oxInitialGuess = 50. # initial guess of oxide thickness in angstroms
+        pinit = [alInitialGuess,plInitialGuess]#,oxInitialGuess]
+        f = lambda x, *p: self.filterModel(x,0,*p)
+        popt, pcov = curve_fit(f, self._e, self._t, p0=pinit,
+                               sigma=self._s, absolute_sigma=True, 
+                               bounds=(0,np.inf)) 
+        perr = np.sqrt(np.diag(pcov))
+        self._alBF = popt[0]
+        self._plBF = popt[1]
+        if len(pinit)==2:
+            self._oxBF = oxInitialGuess
+        else:
+            self._oxBF = popt[2]
+        if doPlot:
+            xSeries = np.arange(2000)
+            lb = popt+perr
+            ub = popt-perr
+            ub[np.where(ub<0)] = 0
+            mpl.plot(xSeries,f(xSeries,*popt))
+            mpl.plot(xSeries,f(xSeries,*ub),ls=':')
+            mpl.plot(xSeries,f(xSeries,*lb),ls=':')
+            mpl.errorbar(self._e,self._t,self._s,fmt='o')
+            mpl.xlabel('Energy (eV)')
+            mpl.ylabel('Transmission')
+            mpl.text(1010,.21,'Al: %.0f A\nPlastic: %.0f A\nOxide: %.0f A'
+                         % (self._alBF,self._plBF,self._oxBF))
+            mpl.ylim(0,1.1)
+            mpl.grid(ls=':')
+            mpl.show(block=True)
+    def fitFromFile(self,filename,plastic,mesh):
+        self.loadTransmission(filename)
+        self.setPlastic(plastic)
+        self.setMesh(mesh)
+        self.fit()
+        return self.printModel()
 
 ##############################################################################
 # General Use Funciton Definitions 
