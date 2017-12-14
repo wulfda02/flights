@@ -10,7 +10,7 @@ import numpy as np
 import matplotlib.pyplot as mpl
 
 # load spectrum
-s = xs.Spectrum("k8r61.pha")
+s = xs.Spectrum("k8r61_test.pha")
 
 # solar abundance (Anders and Grevesse 1989)
 # cool cloud depleted abundances (Savage and Sembach 1996)
@@ -43,11 +43,11 @@ m.setPars(.099,1.,0.,.0088*1e-14*cmPerPc/(4*np.pi),
 # freeze power laws
 m.bknpower.PhoIndx1.frozen = True
 m.bknpower.BreakE.frozen = True
-m.bknpower.PhoIndx1.frozen = True
-m.bknpower_5.norm.frozen = True
+m.bknpower.PhoIndx2.frozen = True
+m.bknpower.norm.frozen = True
 m.bknpower_5.PhoIndx1.frozen = True
 m.bknpower_5.BreakE.frozen = True
-m.bknpower_5.PhoIndx1.frozen = True
+m.bknpower_5.PhoIndx2.frozen = True
 m.bknpower_5.norm.frozen = True
 
 # freeze absorbtion
@@ -73,21 +73,4 @@ mpl.xlabel("Energy (eV)")
 mpl.ylabel("cts/sec/bin")
 mpl.grid(ls=":")
 
-def unityGauss(x,e,fwhm):
-    sig = fwhm/2.355
-    exp = -0.5*np.square((x-e)/sig)
-    return np.exp(exp)/(np.sqrt(2*np.pi)*sig)
-    
-def unityFlat(x,e):
-    y = np.zeros(len(x))
-    i = np.where(x<e)
-    y[i] = 1./e
-    return y
-    
-def peRsp(x,e,fwhm,f):
-    return f*unityFlat(x,e) + (1.-f)*unityGauss(x,e,fwhm)
-    
-x = np.arange(2000)
-y = peRsp(x,1500,10.,.05)
-mpl.plot(x,y)
-mpl.show(block=True)
+

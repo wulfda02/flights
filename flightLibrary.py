@@ -16,6 +16,7 @@ import time
 import os
 import h5py
 import subprocess
+import time
 
 
 ##############################################################################
@@ -710,6 +711,8 @@ class groupTiming(object):
         self._T0Samples = np.zeros(6)
     def groupForPixel(self, pixel):
         return pixel//6
+    def pixelsInGroup(self,group):
+        return group*6 + np.arange(6,dtype='int32')
     def propagateTiming(self):
         for pixel in range(36):
             pxlObj = singlePixel(self._run,pixel)
@@ -757,6 +760,22 @@ class groupTiming(object):
                 iOn = toggle[1]
                 self._toggleTable[pixel,1+i*2] = iOff
                 self._toggleTable[pixel,2+i*2] = iOn
+    def swpTiming(self,T0=0):
+        for grp in range(6):
+            pxls = self.pixelsInGroup(grp)
+            t0Smpls = np.array([])
+            rates = np.array([])
+            for pxl in pxls:
+                pxlObj = singlePixel(self._run,pxl)
+                pxlObj.loadFromHdf('bsn')
+                pxlObj.getTiming(T0=T0)
+                if pxlObj.haveTiming():
+                    t0Smpls = np.append(t0Smpls,pxlObj.T0Sample())
+                    rates = np.append(rates,pxlObj.sampleRate())
+            self._T0Samples[grp] = np.mean(t0Smpls)
+            self._sampleRates[grp] = np.mean(rates)
+        self.propagateTiming()
+                
 
 class allPixels(object):
     def __init__(self,run):
@@ -924,20 +943,27 @@ class observation(object):
         outFile = "%s_effarea.dat" % self.run
         np.savetxt(outFile,np.transpose([.001*energies,effArea]),fmt='%.4f')
         return outFile
-    def genrsp(self,chan_low,chan_high,chan_number,filfil='none',efffil='none'):
+    def genrsp(self,chan_low,chan_high,chan_number,baseName,filfil='none',
+               efffil='none',realFWHM=False):
         fwhm = 0.001*self._rsltn
-        resp_low = round(chan_low-fwhm,3)
+        resp_low = max(.001,round(chan_low-fwhm,3))
         resp_high = round(chan_high+fwhm,3)
-        resp_number = int(1000*(resp_high-resp_low))
-        rmffil = "%s.rsp" % self.run
+        resp_number = int(1000*(resp_high-resp_low)) # 1 eV bins
+        if not realFWHM:
+            # use large number to ensure matrix is correct 
+            # shape for modifying later
+            fwhm = chan_high - chan_low
+        rmffil = "%s.rsp" % baseName
         tlscpe = "XQC"
         if self.run=='k8r61':
             instrm = "XQC6"
+        rsp_min = 1e-6
+        max_elements = 10000000
         tmplt = open('genrsp.tmplt','r')
         lines = tmplt.readlines()
         cmd = lines[-1]
         tpl = (resp_number,resp_low,resp_high,chan_number,chan_low,chan_high,
-               rmffil,filfil,efffil,fwhm,tlscpe,instrm)
+               rmffil,filfil,efffil,fwhm,tlscpe,instrm,rsp_min,max_elements)
         fn = "%s_genrsp.xcm" % self.run
         outfile = open(fn,'w')
         outfile.write(cmd % tpl)
@@ -945,11 +971,49 @@ class observation(object):
         outfile.close()
         subprocess.call(["xspec", fn])
         subprocess.call(["rm", fn])
-        subprocess.call(["rm", filfil])
-        subprocess.call(["rm", efffil])
-    def genpha(self,histy):
-        infile = "%s.txt" % self.run
-        outfile = "%s.pha" % self.run
+        return rmffil
+    def modrsp(self,rspfil,peFraction=0.05,filfil='none'):
+        f = fits.open(rspfil,mode='update')
+        eboundsHDU = f["EBOUNDS"]
+        chanEMin = eboundsHDU.data["E_MIN"]
+        chanEMax = eboundsHDU.data["E_MAX"]
+        chanEWidth = chanEMax - chanEMin
+        rspHDU = f["SPECRESP MATRIX"]
+        rspEMin = rspHDU.data["ENERG_LO"]
+        rspEMax = rspHDU.data["ENERG_HI"]
+        matrix = rspHDU.data["MATRIX"]
+        firstChan = rspHDU.data["F_CHAN"]
+        numChan = rspHDU.data["N_CHAN"]
+        rspLen,chanLen = matrix.shape
+        modE = rspEMin + 0.5*(rspEMax-rspEMin)
+        fwhm = 0.001*self._rsltn
+        rsp_min = rspHDU.header["LO_THRES"]
+        if filfil!='none':
+            efil,tfil = np.transpose(np.loadtxt(filfil))
+        else:
+            efil = modE
+            tfil = np.ones(rspLen)
+        for r in range(rspLen):
+            e = modE[r]
+            filTrans = np.interp(e,efil,tfil)
+            thruput =  filTrans*self._effArea
+            chanStart = firstChan[r]-1 # python counts from 0, not 1
+            chanStop = chanStart + chanLen
+            channels =  np.arange(chanStart,chanStop,dtype='int32')
+            nSteps = 10
+            dE = np.arange(nSteps+1)*chanEWidth[channels].reshape(-1,1)/nSteps
+            chanE = chanEMin[channels].reshape(-1,1) + dE
+            chanRsp = thruput*peRsp(chanE,e,fwhm,peFraction)
+            row = np.trapz(chanRsp,chanE)
+            matrix[r] = row
+            numChan[r] = np.where(row>rsp_min)[0][-1]+1
+        rspHDU.data["MATRIX"] = matrix
+        rspHDU.data["F_CHAN"] = firstChan
+        rspHDU.data["N_CHAN"] = numChan
+        f.flush()
+    def genpha(self,histy,baseName,rspfil='none'):
+        infile = "%s.txt" % baseName
+        outfile = "%s.pha" % baseName
         np.savetxt(infile,histy,fmt='%d')
         detchans = len(histy)
         telescope = "XQC"
@@ -957,16 +1021,18 @@ class observation(object):
             instrume = "XQC6"
             detnam = "XQC6"
         exposure = self._exposure
-        respfile = "%s.rsp" % self.run
         tmplt = open('genpha.tmplt','r')
         lines = tmplt.readlines()
         cmd = lines[-1]
         tpl = (infile,outfile,detchans,telescope,instrume,detnam,
-               exposure,respfile)
+               exposure,rspfil)
         subprocess.call((cmd % tpl).split())
         subprocess.call(["rm", infile])
         return outfile
-    def spectrum(self,eRange,binSize): # create xspec files
+    def spectrum(self,eRange,binSize,fileNameAdd=""): # create xspec files
+        baseName = "%s"% self.run
+        if fileNameAdd!="":
+            baseName += "_%s" % fileNameAdd
         chan_number = int((eRange[1]-eRange[0])//binSize)
         hy,hx = np.histogram(self._events['energy'],range=eRange,
                              bins=chan_number)   
@@ -974,9 +1040,13 @@ class observation(object):
         chan_high = 0.001*hx[-1]
         filfil = self.genfil(hx)
         efffil = self.geneff(hx)
-        self.genrsp(chan_low,chan_high,chan_number,filfil=filfil,efffil=efffil)
-        pha = self.genpha(hy)
-        #np.savetxt('flt6Spec.dat',np.transpose([hx[:-1]+binSize/2,hy]),fmt=['%.2f','%d'])
+        #rsp = self.genrsp(chan_low,chan_high,chan_number,baseName,
+        #                  filfil=filfil,efffil=efffil,realFWHM=True)
+        rsp = self.genrsp(chan_low,chan_high,chan_number,baseName)  
+        self.modrsp(rsp,filfil=filfil)
+        pha = self.genpha(hy,baseName,rspfil=rsp)
+        subprocess.call(["rm", filfil])
+        subprocess.call(["rm", efffil])
         return pha
  
 class spectralLines(object):
@@ -1299,7 +1369,7 @@ class singlePixel(object):
         else:
             return -1
     def timingFromSwp(self,T0=0):
-        fn = "%s_swp.fits" % self.run
+        fn = "data/%s_swp.fits" % self.run
         if os.path.isfile(fn):
             swpFile = fits.open(fn)
             pixelDataHDU = swpFile['Pixel data']
@@ -1342,20 +1412,20 @@ class singlePixel(object):
                     T0Sample = s1 - (t1-T0)*fs
                     self.setSampleRate(fs)
                     self.setT0Sample(T0Sample) 
-    def getTiming(self):
+    def haveTiming(self):
+        return (bool(self.T0Sample()) and np.isfinite(self.T0Sample()))
+    def getTiming(self,T0=0):
         useExisting = True
-        haveTiming = bool(self.T0Sample())
-        if haveTiming and self.interactive:
+        if self.haveTiming():
             print "Timing Information Already In .bsn File"
-            useExisting = not raw_input("Use existing? (Y/n):")[:1].lower()=='n'
-        if ((not haveTiming)or(not useExisting))and(self.haveData()):
-            self.timingFromSwp()
-        haveTiming = bool(self.T0Sample())
-        if haveTiming:
-            print "Timing Information Loaded. Sample Rate: %.1f" % self.sampleRate()
+            if self.interactive:
+                useExisting = not raw_input("Use existing? (Y/n):")[:1].lower()=='n'
+        if ((not self.haveTiming())or(not useExisting))and(self.haveData()):
+            self.timingFromSwp(T0=T0)
+        if self.haveTiming():
+            print "Pixel %d Sample Rate: %.1f" % (self.pixel, self.sampleRate())
     def applyTiming(self):
-        haveTiming = bool(self.T0Sample())
-        if haveTiming:
+        if self.haveTiming():
             self._pulses['time'] = self.TtimeForSample(self._pulses['sample'])
         else:
             print "Timing information not available."
@@ -2148,6 +2218,9 @@ def longConvolution(data, filter_t, sampleForPulseArrival):
         i2 = min(int(i1+convolutionLength), totalDataLength)
     assert(len(dataFiltered)==totalDataLength)
     return dataFiltered
+
+def peRsp(x,e,fwhm,f):
+    return f*unityFlat(x,e) + (1.-f)*unityGauss(x,e,fwhm)
     
 def phRT(dataSegment, positions, dt=96E-6, discriminator=0, doPlot=False): 
     dat = triggerChannel(dataSegment,deriv=0)
@@ -2471,3 +2544,14 @@ def trueSigma(inArray):
             numIter += 1
     return sig, med
 
+def unityFlat(x,e):
+    y = np.zeros(x.shape)
+    i = np.where(x<e)
+    y[i] = 1./e
+    return y
+    
+def unityGauss(x,e,fwhm):
+    sig = fwhm/2.355
+    exp = -0.5*np.square((x-e)/sig)
+    return np.exp(exp)/(np.sqrt(2*np.pi)*sig)
+    
