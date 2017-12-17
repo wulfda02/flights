@@ -32,6 +32,7 @@ All data dependecies go in the /data directory:
 - Parylene.len
 - PI.len
 - Si.len
+
 This script packs the 6 card files into k8r61.bsn.hdf5, applies
 timing from the recored bias-offs, optimally filters and fits 
 all the pulses in the data stream, uses the cold plate temperature 
