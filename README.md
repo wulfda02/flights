@@ -20,18 +20,19 @@ All data dependecies go in the /data directory:
 * optimum filter .fits file (k8O61_fil.fits)
 * optimum filter .fits file for frame pixel (k8F61_fil.fits)
 * 6 IR filter transmission measurements:
-** 11895-2.dat
-** ODB103_092013.dat
-** 2K_30048-3.dat (this is not a very good measurement)
-** 2K105_082013.dat 
-** 130K116_082013.dat
-** RT114_092013.dat
+- 11895-2.dat
+- ODB103_092013.dat
+- 2K_30048-3.dat (this is not a very good measurement)
+- 2K105_082013.dat 
+- 130K116_082013.dat
+- RT114_092013.dat
 * /length directory (column depths for fitting IR filters):
-** Al_smith.len
-** O.len
-** Parylene.len
-** PI.len
-** Si.len
+- Al_smith.len
+- O.len
+- Parylene.len
+- PI.len
+- Si.len
+
 This script packs the 6 card files into k8r61.bsn.hdf5, applies
 timing from the recored bias-offs, optimally filters and fits 
 all the pulses in the data stream, uses the cold plate temperature 
