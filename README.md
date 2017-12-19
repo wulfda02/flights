@@ -43,6 +43,11 @@ pyxspec fitting in this script.  All processing information is stored
 in the bsn.hdf5 file, which can be easily accessed through the 
 singlePixel class in flightLibrary.py
 
+genrsp.tmplt, genpha.tmplt
+These are templates for the heasarc utilties need to make PHA and 
+RMF/RSP files. They also include all hte documentation I could find 
+online, since it wasn't obvious to me how to use the utilties.
+
 analyzeBelljar.py
 This script is very similar to the first part of analyzeFlight6.py, 
 except for l5r18 (belljar source run). However, rather than

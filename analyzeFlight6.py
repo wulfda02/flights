@@ -60,7 +60,7 @@ if not os.path.isfile(fn):
 runObj = fl.allPixels(run)
 #runObj.eScale()
 
-## IR filter stack
+# IR filter stack
 #filters = {'IDB':['11895-2.dat','polyimide','none'],
 #           'ODB':['ODB103_092013.dat','polyimide','none'],
 #           'I2K':['2K_30048-3.dat','polyimide','new'],
@@ -78,7 +78,7 @@ runObj = fl.allPixels(run)
 obsObj = runObj.selectEvents()
 # specra with significantly more than 1000 bins may cause memory 
 # problems when making the response matrix
-phaFile = obsObj.spectrum([100,4000],3,fileNameAdd="test")
+phaFile = obsObj.spectrum([200,5000],2.5,fileNameAdd="test")
 
 # Xspec fitting
 #import xspec as xs

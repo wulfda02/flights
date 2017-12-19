@@ -816,6 +816,8 @@ class allPixels(object):
                 pxlGain = gainObj.pixelGain(pxlPls)
                 pxlPls['gain'] = pxlGain
                 self.setPixelPulses(p,pxlPls)
+        else:
+            self._pulses['gain'] = 1.
     def nonLin(self,doPlot=False):
         if self.run=='k8r61':
             railTime = (-1740,-540)
@@ -832,7 +834,7 @@ class allPixels(object):
                 y = fitPolyBkwd(coefs,x)
                 ph = np.interp(lines.realE,y,x)
                 if np.any(np.abs(lines.fitE-ph)>1.5):
-                    print p
+                    print "Bad Pixel: %d" % p
                 if doPlot: 
                     mpl.errorbar(lines.fitE-ph,lines.realE,
                                  xerr=lines.fitEErr,fmt='o')
@@ -842,15 +844,6 @@ class allPixels(object):
                     mpl.axvline(0)
                     mpl.show(block=True)
                 if np.any(coefs):
-                    #a = coefs[0]
-                    #b = coefs[1]
-                    #calPH = np.roots([b,a,-3313.8]).max()
-                    #print calPH
-                    #calPH_raw = pxlPls['gain']*calPH
-                    #d = 1./(pxlPls['gain']*(1. + b*calPH_raw/a))
-                    #e = b*d/a
-                    #phCorr = d*pxlPls['ph'] + e*np.square(pxlPls['ph'])
-                    #pxlPls['energy'] = a*phCorr + b*np.square(phCorr)
                     pxlPls['lin'] = coefs[0]/pxlPls['gain']
                     pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
                     pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
@@ -858,19 +851,48 @@ class allPixels(object):
                     self.setPixelPulses(p,pxlPls)
                 else: 
                     print "Unable To Fit Non-Linearities For Pixel %d" % p
-            railPls = self.pulses()[((self.pulses()['time']>railTime[0])
-                                     &(self.pulses()['time']<railTime[1])
-                                     &(self.pulses()['resolution']==0))]
-            skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
-                                     &(self.pulses()['time']<skyTime[1])
-                                     &(self.pulses()['resolution']==0))]
-            chutePls = self.pulses()[((self.pulses()['time']>chuteTime[0])
-                                     &(self.pulses()['time']<chuteTime[1])
-                                     &(self.pulses()['resolution']==0))]
-            mpl.hist(railPls['energy'],range=(0,4000),bins=1600,normed=True,histtype='step')
-            mpl.hist(chutePls['energy'],range=(0,4000),bins=1600,normed=True,histtype='step')
-            mpl.hist(skyPls['energy'],range=(0,4000),bins=1600,normed=True,histtype='step')
-            mpl.show(block=True)
+            if doPlot:
+                railPls = self.pulses()[((self.pulses()['time']>railTime[0])
+                                         &(self.pulses()['time']<railTime[1])
+                                         &(self.pulses()['resolution']==0))]
+                skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
+                                         &(self.pulses()['time']<skyTime[1])
+                                         &(self.pulses()['resolution']==0))]
+                chutePls = self.pulses()[((self.pulses()['time']>chuteTime[0])
+                                         &(self.pulses()['time']<chuteTime[1])
+                                         &(self.pulses()['resolution']==0))]
+                mpl.hist(railPls['energy'],range=(0,4000),
+                         bins=1600,normed=True,histtype='step')
+                mpl.hist(chutePls['energy'],range=(0,4000),
+                         bins=1600,normed=True,histtype='step')
+                mpl.hist(skyPls['energy'],range=(0,4000),
+                         bins=1600,normed=True,histtype='step')
+                mpl.show(block=True)
+        else:
+            for p in self.pixels():
+                pxlPls = self.pixelPulses(p)
+                goodPls = pxlPls[(pxlPls['resolution']==0)]
+                lines = spectralLines(goodPls['ph']/goodPls['gain'])
+                coefs = lines.eNonLin()
+                x = np.arange(4000)
+                y = fitPolyBkwd(coefs,x)
+                ph = np.interp(lines.realE,y,x)
+                if doPlot: 
+                    mpl.errorbar(lines.fitE-ph,lines.realE,
+                                 xerr=lines.fitEErr,fmt='o')
+                    mpl.ylabel('Energy (eV)')
+                    mpl.xlabel('Delta E (eV)')
+                    mpl.title('Pixel %d' % p)
+                    mpl.axvline(0)
+                    mpl.show(block=True)
+                if np.any(coefs):
+                    pxlPls['lin'] = coefs[0]/pxlPls['gain']
+                    pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
+                    pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
+                                        +pxlPls['quad']*np.square(pxlPls['ph']))
+                    self.setPixelPulses(p,pxlPls)
+                else: 
+                    print "Unable To Fit Non-Linearities For Pixel %d" % p
     def eScale(self):
         self.gainDrift()
         self.nonLin()
@@ -929,22 +951,40 @@ class observation(object):
         self._rsltn = resolution
     def genfil(self,energies):
         inFile = open("data/%s_filterstack.dat" % self.run,"r")
-        outFile = "%s_filtertrans.dat" % self.run
         transmission = np.ones(len(energies))
         for aline in inFile:
             f = IRFilter()
             f.loadFromString(aline)
             transmission = transmission*f.transmission(energies)
+        return transmission
+    def writeFilfil(self,energies):
+        outFile = "%s_filtertrans.dat" % self.run
+        transmission = self.genfil(energies)
         np.savetxt(outFile,np.transpose([.001*energies,transmission]),
-                   fmt='%.4f')
+                   fmt='%.6f')
         return outFile
     def geneff(self,energies):
         effArea = self._effArea*np.ones(len(energies))
+        return effArea
+    def writeEfffil(self,energies):
         outFile = "%s_effarea.dat" % self.run
-        np.savetxt(outFile,np.transpose([.001*energies,effArea]),fmt='%.4f')
+        effArea = self.geneff(energies)
+        np.savetxt(outFile,np.transpose([.001*energies,effArea]),fmt='%.6f')
+        return outFile
+    def gendet(self,energies):
+        absrbr = np.transpose(np.loadtxt("data/absorberTransmission.dat"))
+        sbstrt = np.transpose(np.loadtxt("data/substrateTransmission.dat"))
+        absT = np.interp(energies,absrbr[0],absrbr[1])
+        subT = np.interp(energies,sbstrt[0],sbstrt[1])
+        detEff = (1.-absT*subT)
+        return detEff
+    def writeDetfil(self,energies):
+        outFile = "%s_deteff.dat" % self.run
+        detEff = self.gendet(energies)
+        np.savetxt(outFile,np.transpose([.001*energies,detEff]),fmt='%.6f')
         return outFile
     def genrsp(self,chan_low,chan_high,chan_number,baseName,filfil='none',
-               efffil='none',realFWHM=False):
+               efffil='none',detfil='none',realFWHM=False):
         fwhm = 0.001*self._rsltn
         resp_low = max(.001,round(chan_low-fwhm,3))
         resp_high = round(chan_high+fwhm,3)
@@ -963,7 +1003,7 @@ class observation(object):
         lines = tmplt.readlines()
         cmd = lines[-1]
         tpl = (resp_number,resp_low,resp_high,chan_number,chan_low,chan_high,
-               rmffil,filfil,efffil,fwhm,tlscpe,instrm,rsp_min,max_elements)
+               rmffil,filfil,efffil,detfil,fwhm,tlscpe,instrm,rsp_min,max_elements)
         fn = "%s_genrsp.xcm" % self.run
         outfile = open(fn,'w')
         outfile.write(cmd % tpl)
@@ -972,7 +1012,19 @@ class observation(object):
         subprocess.call(["xspec", fn])
         subprocess.call(["rm", fn])
         return rmffil
-    def modrsp(self,rspfil,peFraction=0.05,filfil='none'):
+    def mushFraction(self,energies):
+        eRange = LEeRange(energies)
+        roHgTe = 8.10e6 # ug/cm^3
+        tHgTe = 7.5e-5 # cm
+        Rabsorber = roHgTe*tHgTe
+        eEscape = 0.5*np.minimum(eRange,Rabsorber)/Rabsorber # super simplistic
+        absrbr = np.transpose(np.loadtxt("data/absorberTransmission.dat"))
+        sbstrt = np.transpose(np.loadtxt("data/substrateTransmission.dat"))
+        absT = np.interp(energies,absrbr[0],absrbr[1])
+        subT = np.interp(energies,sbstrt[0],sbstrt[1])
+        mush = (absT*(1.-subT) + (1.-absT)*eEscape)/((1.-absT)*(1.-eEscape))
+        return mush
+    def modrsp(self,rspfil):
         f = fits.open(rspfil,mode='update')
         eboundsHDU = f["EBOUNDS"]
         chanEMin = eboundsHDU.data["E_MIN"]
@@ -988,22 +1040,19 @@ class observation(object):
         modE = rspEMin + 0.5*(rspEMax-rspEMin)
         fwhm = 0.001*self._rsltn
         rsp_min = rspHDU.header["LO_THRES"]
-        if filfil!='none':
-            efil,tfil = np.transpose(np.loadtxt(filfil))
-        else:
-            efil = modE
-            tfil = np.ones(rspLen)
+        filTrans = self.genfil(1000*modE)
+        detEff = self.gendet(1000*modE)
+        mush = self.mushFraction(1000*modE)
         for r in range(rspLen):
             e = modE[r]
-            filTrans = np.interp(e,efil,tfil)
-            thruput =  filTrans*self._effArea
+            thruput =  self._effArea*filTrans[r]*detEff[r]
             chanStart = firstChan[r]-1 # python counts from 0, not 1
             chanStop = chanStart + chanLen
             channels =  np.arange(chanStart,chanStop,dtype='int32')
             nSteps = 10
             dE = np.arange(nSteps+1)*chanEWidth[channels].reshape(-1,1)/nSteps
             chanE = chanEMin[channels].reshape(-1,1) + dE
-            chanRsp = thruput*peRsp(chanE,e,fwhm,peFraction)
+            chanRsp = thruput*xqcRsp(chanE,e,fwhm,mush[r])
             row = np.trapz(chanRsp,chanE)
             matrix[r] = row
             numChan[r] = np.where(row>rsp_min)[0][-1]+1
@@ -1038,15 +1087,17 @@ class observation(object):
                              bins=chan_number)   
         chan_low = 0.001*hx[0] # convert to keV
         chan_high = 0.001*hx[-1]
-        filfil = self.genfil(hx)
-        efffil = self.geneff(hx)
+        #filfil = self.writeFilfil(hx)
+        #efffil = self.writeEfffil(hx)
+        #detfil = self.writeDetfil(hx)
         #rsp = self.genrsp(chan_low,chan_high,chan_number,baseName,
         #                  filfil=filfil,efffil=efffil,realFWHM=True)
         rsp = self.genrsp(chan_low,chan_high,chan_number,baseName)  
-        self.modrsp(rsp,filfil=filfil)
+        self.modrsp(rsp)
         pha = self.genpha(hy,baseName,rspfil=rsp)
-        subprocess.call(["rm", filfil])
-        subprocess.call(["rm", efffil])
+        #subprocess.call(["rm", filfil])
+        #subprocess.call(["rm", efffil])
+        #subprocess.call(["rm", detfil])
         return pha
  
 class spectralLines(object):
@@ -1620,8 +1671,6 @@ class singlePixel(object):
                 print msg
                 printWhen += 1
         print  "%.1f%% Total Deadtime"% self.deadTime()
-    def plotPulses(self):
-        scatterPulses(self._pulses)
     def nonLinGain(self):
         pulseHeights = self._pulses['ph']
         lines = spectralLines(pulseHeights)  
@@ -2188,6 +2237,17 @@ def halfCosWindow(inArray, halfCosFraction):
 def innerProduct(f1,f2):
     return np.inner(f1,f2).astype(float)/np.inner(f2,f2)   
     
+# Range-Energy Relationship for Electrons
+# p. 307 Handbook of Space Astronomy & Astrophysics
+# Valid for 20eV<E<10keV
+# A/Z ~ 2 for everything besides H
+# E given in eV
+# Returns R in ug/cm^2 to ~25% precision
+def LEeRange(E, AdivZ=2.):
+    exponent =  -4.5467 + 0.31104*np.log(E) + 0.07773*np.square(np.log(E))
+    R = AdivZ * np.exp(exponent)
+    return R
+    
 def longConvolution(data, filter_t, sampleForPulseArrival):    
     totalDataLength = len(data)
     convolutionLength = int(2**20) 
@@ -2218,9 +2278,6 @@ def longConvolution(data, filter_t, sampleForPulseArrival):
         i2 = min(int(i1+convolutionLength), totalDataLength)
     assert(len(dataFiltered)==totalDataLength)
     return dataFiltered
-
-def peRsp(x,e,fwhm,f):
-    return f*unityFlat(x,e) + (1.-f)*unityGauss(x,e,fwhm)
     
 def phRT(dataSegment, positions, dt=96E-6, discriminator=0, doPlot=False): 
     dat = triggerChannel(dataSegment,deriv=0)
@@ -2554,4 +2611,9 @@ def unityGauss(x,e,fwhm):
     sig = fwhm/2.355
     exp = -0.5*np.square((x-e)/sig)
     return np.exp(exp)/(np.sqrt(2*np.pi)*sig)
+    
+def xqcRsp(x,e,fwhm,mushFrac,mushEnergy=.827,mushWidth=.160,peFrac=.0244):
+    return ((1.-peFrac)*((1.-mushFrac)*unityGauss(x,e,fwhm)
+                         + mushFrac*unityGauss(x,mushEnergy*e,mushWidth))
+            + peFrac*unityFlat(x,e))
     
