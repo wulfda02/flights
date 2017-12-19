@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 """
 Created on Thu Nov 20 13:55:47 2014
 All the definitions needed/used in filterAndFit

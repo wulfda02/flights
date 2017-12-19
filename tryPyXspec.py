@@ -9,6 +9,29 @@ import xspec as xs
 import numpy as np
 import matplotlib.pyplot as mpl
 
+# define own absorption model
+# based on IR nH data, using 
+# Ander & Ebihara metalicities
+# Wisconsin cross sections
+# and averaged over FOV
+fn = "data/irnh_AndersEbihara_165--5.dat"
+absorption = np.transpose(np.loadtxt(fn))
+keV = .001*absorption[0]
+nH = absorption[1]
+sigma = absorption[2]
+
+def avgabs(energies,params,factor):
+    for i in range(len(energies)-1):
+        eLo = energies[i]
+        eHi = energies[i+1]
+        e = np.linspace(eLo,eHi,10)
+        col = params[0]*np.interp(e,keV,nH)
+        avgT = np.trapz(np.exp(-1*col*np.interp(e,keV,sigma)),e)/(eHi-eLo)
+        factor[i] = avgT
+
+absInfo = ("norm '' 1.0 0.0 0.1 1.9 2.0 0.001",)
+xs.AllModels.addPyMod(avgabs,absInfo,'mul',spectrumDependent=True)       
+
 # load spectrum
 s = xs.Spectrum("k8r61_test.pha")
 
@@ -24,9 +47,9 @@ cmPerPc = 3.086e+18 # pc to cm conversion
 # + unabsorbed thermal (LHB)
 # + cal lines
 # thermal norms initially set to 0
-m = xs.Model("apec + wabs*(apec + bknp + bknp) + gau + gau")
+m = xs.Model("apec + avgabs*(apec + bknp + bknp) + gau + gau")
 m.setPars(.08617,1,0,0,
-          .018,
+          1.,
           .26,1,0,0,
           1.54,.9,1.4,5.7,
           1.96,.9,1.4,4.9,
@@ -44,7 +67,7 @@ m.bknpower_5.PhoIndx2.frozen = True
 m.bknpower_5.norm.frozen = True
 
 # freeze absorbtion
-m.wabs.nH.frozen = True
+m.avgabs.norm.frozen = True
 
 # freeze thermal norms
 m.apec.norm.frozen = True
