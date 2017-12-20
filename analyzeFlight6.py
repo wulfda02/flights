@@ -58,7 +58,7 @@ if not os.path.isfile(fn):
 #        
 ## Apply temperature-corrected non-linear gain scale
 runObj = fl.allPixels(run)
-#runObj.eScale()
+runObj.eScale()
 
 # IR filter stack
 #filters = {'IDB':['11895-2.dat','polyimide','none'],
@@ -78,15 +78,16 @@ runObj = fl.allPixels(run)
 obsObj = runObj.selectEvents()
 # specra with significantly more than 1000 bins may cause memory 
 # problems when making the response matrix
-phaFile = obsObj.spectrum([200,5000],2.5,fileNameAdd="test")
+phaFile = obsObj.spectrum([200,4000],2,fileNameAdd="test")
 
-# Xspec fitting
-#import xspec as xs
-#xs.Spectrum(phaFile)
-#xs.Model("vmekal+wabs*(vmekal+bknpower+bknpower)")
-#xs.Fit.perform()
-#xs.Plot.device = "/xs"
-#xs.Plot("data")
+#import matplotlib.pyplot as mpl
+#pls = obsObj._events
+#for p in pixels:
+#    pltPls = pls[(pls['pixel']==p)]['energy']
+#    mpl.hist(pltPls,range=[0,4000],bins=1600,histtype='step',label=str(p))
+#    mpl.legend(loc='best')
+#    mpl.show(block=True)
+
 
 
 

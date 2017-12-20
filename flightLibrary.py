@@ -833,7 +833,7 @@ class allPixels(object):
                 x = np.arange(4000)
                 y = fitPolyBkwd(coefs,x)
                 ph = np.interp(lines.realE,y,x)
-                if np.any(np.abs(lines.fitE-ph)>1.5):
+                if np.any(np.abs(lines.fitE-ph)>2.5):
                     print "Bad Pixel: %d" % p
                 if doPlot: 
                     mpl.errorbar(lines.fitE-ph,lines.realE,
@@ -906,7 +906,7 @@ class allPixels(object):
             skyTime = (185.,436.) # T-time of observation
             exposure = skyTime[1]-skyTime[0]
             #badPixels = np.array([9,18,28,32,33],dtype=int)
-            badPixels = np.array([18,26,29,35],dtype=int) # bad escales
+            badPixels = np.array([7,8,17,18,19,24,26,29,31,35],dtype=int) # bad escales
             goodPixels = np.setdiff1d(self.pixels(),badPixels)
             skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
                                     &(self.pulses()['time']<skyTime[1]))]
@@ -1094,7 +1094,7 @@ class observation(object):
         #                  filfil=filfil,efffil=efffil,realFWHM=True)
         rsp = self.genrsp(chan_low,chan_high,chan_number,baseName)  
         self.modrsp(rsp)
-        pha = self.genpha(hy,baseName,rspfil=rsp)
+        pha = self.genpha(hy,baseName,rspfil="%s.rsp" % baseName)
         #subprocess.call(["rm", filfil])
         #subprocess.call(["rm", efffil])
         #subprocess.call(["rm", detfil])
@@ -1107,7 +1107,8 @@ class spectralLines(object):
         self.maxE = 4000.
         #self.gl = {'B':183.3, 'C':277.0, 'N':392.4, 'O':524.9, 'F':676.8, 
         #           'Ka':3313.8, 'Kb':3589.6}  
-        self.gl = {'C':277.0,'O':524.9,'Ka':3313.8}    
+        #self.gl = {'C':277.0,'O':524.9,'Ka':3313.8}    
+        self.gl = {'Al':1486.6,'Ka':3313.8}   
         self.realE = np.array([])
         self.fitE = np.array([])
         self.fitEErr = np.array([])

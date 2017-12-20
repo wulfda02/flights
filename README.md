@@ -59,6 +59,13 @@ this script finds sweeps in the data stream to get the timing.
 * 6 card files (l5r18*.le.dat)
 * swp file for timing (l5r18_swp.fits)
 
+analyzeFlight5.py
+Complete analysis of run j5r62 a.k.a. Flight 5 a.k.a.
+Flight 36.264 a.k.a. the 2011 flight.
+/data dependecies:
+* 6 card files (j5r62*.le.dat)
+* swp file for timing (j5r62_swp.fits)
 
-2011 Flight = 36.264 = j5r62
+
+
 2008 Flight = 36.223 = h6r19

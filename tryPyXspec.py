@@ -24,9 +24,11 @@ def avgabs(energies,params,factor):
     for i in range(len(energies)-1):
         eLo = energies[i]
         eHi = energies[i+1]
-        e = np.linspace(eLo,eHi,10)
+        nSteps = max(2,int(1000*(eHi-eLo)+1)) # approx 1 eV steps 
+        e = np.linspace(eLo,eHi,nSteps)
         col = params[0]*np.interp(e,keV,nH)
-        avgT = np.trapz(np.exp(-1*col*np.interp(e,keV,sigma)),e)/(eHi-eLo)
+        sig = np.interp(e,keV,sigma)
+        avgT = np.trapz(np.exp(-1*col*sig),e)/(eHi-eLo)
         factor[i] = avgT
 
 absInfo = ("norm '' 1.0 0.0 0.1 1.9 2.0 0.001",)
@@ -36,9 +38,11 @@ xs.AllModels.addPyMod(avgabs,absInfo,'mul',spectrumDependent=True)
 s = xs.Spectrum("k8r61_test.pha")
 
 # solar abundance (Anders and Grevesse 1989)
-xs.Xset.abund = "angr"
+#xs.Xset.abund = "angr"
+#z = "Solar"
 # cool cloud depleted abundances (Savage and Sembach 1996)
-#xs.Xset.abund = "file sscooln.abund"
+xs.Xset.abund = "file sscooln.abund"
+z = "Depleted"
 
 cmPerPc = 3.086e+18 # pc to cm conversion
 
@@ -50,7 +54,7 @@ cmPerPc = 3.086e+18 # pc to cm conversion
 m = xs.Model("apec + avgabs*(apec + bknp + bknp) + gau + gau")
 m.setPars(.08617,1,0,0,
           1.,
-          .26,1,0,0,
+          .1,1,0,0,
           1.54,.9,1.4,5.7,
           1.96,.9,1.4,4.9,
           3.318,.01,25,
@@ -117,7 +121,7 @@ m.apec.norm.frozen = False
 m.apec_3.norm.frozen = False
 
 # freeze LHB temperature to 10^6K
-m.apec.kT.frozen = True
+#m.apec.kT.frozen = True
 
 # ignore high energy bins
 s.ignore("1.-**")
@@ -126,8 +130,10 @@ xs.Fit.perform()
 
 # access important numbers
 kb = 8.617e-8 # keV/K
-LHBT = np.log10(m.apec.kT.values[0]/kb)
+LHBT = m.apec.kT.values[0]/kb
 LHBEM = m.apec.norm.values[0]*4*np.pi/(1e-14*cmPerPc)
+HaloT = m.apec_3.kT.values[0]/kb
+HaloEM = m.apec_3.norm.values[0]*4*np.pi/(1e-14*cmPerPc)
 
 # set plotting parameters
 xs.Plot.xAxis = "keV"
@@ -141,6 +147,9 @@ mpl.step(energy,counts,where="mid",lw=.5)
 mpl.plot(energy,model)
 mpl.xlabel("Energy (eV)")
 mpl.ylabel("cts/sec/bin")
+mpl.text(200,20,"LHB T: %.1e K\nLHB EM: %.1e pc cm^-6" % (LHBT,LHBEM))
+mpl.text(700,30,"Halo T: %.1e K\nHalo EM: %.1e pc cm^-6" % (HaloT,HaloEM))
+mpl.title("%s Abundances" % z)
 mpl.grid(ls=":")
 mpl.show(block=True)
 
