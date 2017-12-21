@@ -32,8 +32,9 @@ if not os.path.isfile(fn):
 
 # Get timing from swp file    
 print "Applying timing..."
+T0 = 25200 # 7:00AM UT    
 timing = fl.groupTiming(run)
-timing.swpTiming()
+timing.swpTiming(T0=T0)
     
 
 for pixel in pixels:
@@ -57,7 +58,7 @@ for pixel in pixels:
     
     # Fit filtered data
     pxlObj.fitFilteredData(filters)
-    
+     
     # Save fit to hdf5 file
     pxlObj.writeHdfFit('bsn')
         

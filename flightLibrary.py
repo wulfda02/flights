@@ -1092,12 +1092,12 @@ class observation(object):
         #detfil = self.writeDetfil(hx)
         #rsp = self.genrsp(chan_low,chan_high,chan_number,baseName,
         #                  filfil=filfil,efffil=efffil,realFWHM=True)
-        rsp = self.genrsp(chan_low,chan_high,chan_number,baseName)  
-        self.modrsp(rsp)
-        pha = self.genpha(hy,baseName,rspfil="%s.rsp" % baseName)
         #subprocess.call(["rm", filfil])
         #subprocess.call(["rm", efffil])
         #subprocess.call(["rm", detfil])
+        rsp = self.genrsp(chan_low,chan_high,chan_number,baseName)  
+        self.modrsp(rsp)
+        pha = self.genpha(hy,baseName,rspfil="%s.rsp" % baseName)
         return pha
  
 class spectralLines(object):
@@ -1431,12 +1431,21 @@ class singlePixel(object):
             j = 0
             attempts = 0
             pulseFound = False
+            firstSweepTime = pixelDataHDU.data['Pulse_Time'][swpIdx][j]
+            if self.run=='j5r62' or self.run=='h6r19':
+                cardStartTime = T0-2000
+            else:
+                cardStartTime = firstSweepTime
             while (not pulseFound) and (attempts<3):
                 while pixelDataHDU.data['Flag'][swpIdx][j]>6:
                     j += 1
                 p1 = pixelDataHDU.data['Pulse_Data'][swpIdx][j][:lenTrace]
                 t1 = pixelDataHDU.data['Pulse_Time'][swpIdx][j] 
+                if t1<cardStartTime+60:
+                    j += 1
+                    continue
                 s1 = 0
+                print self.pixel, 1, attempts
                 s1 = self.findSegInData(p1,s1)
                 if s1>0:
                     pulseFound = True
@@ -1448,6 +1457,7 @@ class singlePixel(object):
                 attempts = 0
                 pulseFound = False
                 while (not pulseFound) and (attempts<3):
+                    print self.pixel, 2, attempts
                     while pixelDataHDU.data['Flag'][swpIdx][j]>6:
                         j -= 1
                     p2 = pixelDataHDU.data['Pulse_Data'][swpIdx][j][:lenTrace]
@@ -1457,13 +1467,17 @@ class singlePixel(object):
                     if s2>0:
                         pulseFound = True
                     else:
-                        j += 1
+                        j -= 1
                         attempts += 1
                 if pulseFound:
                     fs = (s2 - s1)/(t2 - t1)
                     T0Sample = s1 - (t1-T0)*fs
                     self.setSampleRate(fs)
                     self.setT0Sample(T0Sample) 
+                else:
+                    print "Unable to find timing for pixel %d" % self.pixel
+            else:
+                print "Unable to find timing for pixel %d" % self.pixel
     def haveTiming(self):
         return (bool(self.T0Sample()) and np.isfinite(self.T0Sample()))
     def getTiming(self,T0=0):
@@ -1517,7 +1531,7 @@ class singlePixel(object):
         useExisting = True
         defaultLength = True
         useFits = True
-        filterLength = 4096
+        filterLength = 8192
         if self.haveFilter() and self.interactive:
             print "Filter Information Already In .bsn File"
             useExisting = not raw_input("Use existing? (Y/n):")[:1].lower()=='n'   

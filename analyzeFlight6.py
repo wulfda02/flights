@@ -61,24 +61,25 @@ runObj = fl.allPixels(run)
 runObj.eScale()
 
 # IR filter stack
-#filters = {'IDB':['11895-2.dat','polyimide','none'],
-#           'ODB':['ODB103_092013.dat','polyimide','none'],
-#           'I2K':['2K_30048-3.dat','polyimide','new'],
-#           'O2K':['2K105_082013.dat','polyimide','new'],
-#           '130K':['130K116_082013.dat','polyimide','new'],
-#           'RT':['RT114_092013.dat','polyimide','new']}
-#filterStack = open("data/%s_filterstack.dat" % run,"w")
-#for fid in filters:
-#    f = filters[fid]
-#    irf = fl.IRFilter()
-#    filterStack.write(irf.fitFromFile(*f))
-#filterStack.close()
+# 'I2K':['2K_30048-3.dat','polyimide','new'],
+filters = {'IDB':['11895-2.dat','polyimide','none'],
+           'ODB':['ODB103_092013.dat','polyimide','none'],
+           'I2K':['2K105_082013.dat','polyimide','new'],
+           'O2K':['2K105_082013.dat','polyimide','new'],
+           '130K':['130K116_082013.dat','polyimide','new'],
+           'RT':['RT114_092013.dat','polyimide','new']}
+filterStack = open("data/%s_filterstack.dat" % run,"w")
+for fid in filters:
+    f = filters[fid]
+    irf = fl.IRFilter()
+    filterStack.write(irf.fitFromFile(*f))
+filterStack.close()
 
 # Create on-target spectrum
 obsObj = runObj.selectEvents()
 # specra with significantly more than 1000 bins may cause memory 
 # problems when making the response matrix
-phaFile = obsObj.spectrum([200,4000],2,fileNameAdd="test")
+phaFile = obsObj.spectrum([200,4000],2)
 
 #import matplotlib.pyplot as mpl
 #pls = obsObj._events

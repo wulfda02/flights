@@ -22,7 +22,8 @@ All data dependecies go in the /data directory:
 * 6 IR filter transmission measurements:
 - 11895-2.dat
 - ODB103_092013.dat
-- 2K_30048-3.dat (this is not a very good measurement)
+- 2K_30048-3.dat (this is not a very good measurement, so 
+I've subbed in 2K105_082013 again)
 - 2K105_082013.dat 
 - 130K116_082013.dat
 - RT114_092013.dat
