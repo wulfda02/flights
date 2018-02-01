@@ -54,13 +54,12 @@ cmPerPc = 3.086e+18 # pc to cm conversion
 # + unabsorbed thermal (LHB)
 # + cal lines
 # thermal norms initially set to 0
-m = xs.Model("apec + avgabs*(bknp + bknp + apec) + acx")
+m = xs.Model("apec + avgabs*(bknp + bknp + apec)")
 m.setPars(.08617,1,0,0,
           1.,
           1.54,1.2,1.4,5.7,
           1.96,1.2,1.4,4.9,
-          .2,1,0,0,
-          .17,.1,1,0,1,8,0)
+          .2,1,0,0)
           
 # freeze power laws
 m.bknpower.PhoIndx1.frozen = True
@@ -76,20 +75,13 @@ m.bknpower_4.norm.frozen = True
 m.avgabs.norm.frozen = True
 
 # freeze LHB T
-m.apec.kT.frozen = True
-
-# freeze CX parameters
-m.acx.Abundanc.frozen = True
-m.acx.redshift.frozen = True
-m.acx.swcx.frozen = True
-m.acx.model.frozen = True
-#m.acx.norm.frozen = True
+#m.apec.kT.frozen = True
 
 # scheme for estimating variance (needed for empty bins)
 xs.Fit.weight = "model"
 
 # set fit statistic
-xs.Fit.statMethod = "cstat"
+xs.Fit.statMethod = "pgstat"
 
 xs.Fit.perform()
 
@@ -112,8 +104,8 @@ mpl.step(energy,counts,where="mid",lw=.5)
 mpl.plot(energy,model)
 mpl.xlabel("Energy (eV)")
 mpl.ylabel("cts/sec/bin")
-#mpl.text(200,20,"LHB T: %.1e K\nLHB EM: %.1e pc cm^-6" % (LHBT,LHBEM))
-#mpl.text(700,30,"Halo T: %.1e K\nHalo EM: %.1e pc cm^-6" % (HaloT,HaloEM))
+mpl.text(200,20,"LHB T: %.1e K\nLHB EM: %.1e pc cm^-6" % (LHBT,LHBEM))
+mpl.text(700,30,"Halo T: %.1e K\nHalo EM: %.1e pc cm^-6" % (HaloT,HaloEM))
 mpl.title("%s Abundances" % z)
 mpl.grid(ls=":")
 mpl.show(block=True)

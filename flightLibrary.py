@@ -818,84 +818,65 @@ class allPixels(object):
                 self.setPixelPulses(p,pxlPls)
         else:
             self._pulses['gain'] = 1.
-    def nonLin(self,doPlot=False):
+    def nonLin(self,order=2,doPlot=False):
         if self.run=='k8r61':
             railTime = (-1740,-540)
             chuteTime = (706,920)
             skyTime = (185,436)
-            for p in self.pixels():
-                pxlPls = self.pixelPulses(p)
-                railPxlPls = pxlPls[((pxlPls['time']>railTime[0])
-                                     &(pxlPls['time']<railTime[1])
-                                     &(pxlPls['resolution']==0))]
-                lines = spectralLines(railPxlPls['ph']/railPxlPls['gain'])
-                coefs = lines.eNonLin()
-                x = np.arange(4000)
-                y = fitPolyBkwd(coefs,x)
-                ph = np.interp(lines.realE,y,x)
-                if np.any(np.abs(lines.fitE-ph)>2.5):
-                    print "Bad Pixel: %d" % p
-                if doPlot: 
-                    mpl.errorbar(lines.fitE-ph,lines.realE,
-                                 xerr=lines.fitEErr,fmt='o')
-                    mpl.ylabel('Energy (eV)')
-                    mpl.xlabel('Delta E (eV)')
-                    mpl.title('Pixel %d' % p)
-                    mpl.axvline(0)
-                    mpl.show(block=True)
-                if np.any(coefs):
-                    pxlPls['lin'] = coefs[0]/pxlPls['gain']
-                    pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
-                    pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
-                                        +pxlPls['quad']*np.square(pxlPls['ph']))
-                    self.setPixelPulses(p,pxlPls)
-                else: 
-                    print "Unable To Fit Non-Linearities For Pixel %d" % p
-            if doPlot:
-                railPls = self.pulses()[((self.pulses()['time']>railTime[0])
-                                         &(self.pulses()['time']<railTime[1])
-                                         &(self.pulses()['resolution']==0))]
-                skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
-                                         &(self.pulses()['time']<skyTime[1])
-                                         &(self.pulses()['resolution']==0))]
-                chutePls = self.pulses()[((self.pulses()['time']>chuteTime[0])
-                                         &(self.pulses()['time']<chuteTime[1])
-                                         &(self.pulses()['resolution']==0))]
-                mpl.hist(railPls['energy'],range=(0,4000),
-                         bins=1600,normed=True,histtype='step')
-                mpl.hist(chutePls['energy'],range=(0,4000),
-                         bins=1600,normed=True,histtype='step')
-                mpl.hist(skyPls['energy'],range=(0,4000),
-                         bins=1600,normed=True,histtype='step')
-                mpl.show(block=True)
+        elif self.run=='j5r62':
+            railTime = (-1740,-540)
+            skyTime = (155,436)
+            chuteTime = (706,920)
         else:
-            for p in self.pixels():
-                pxlPls = self.pixelPulses(p)
-                goodPls = pxlPls[(pxlPls['resolution']==0)]
-                lines = spectralLines(goodPls['ph']/goodPls['gain'])
-                coefs = lines.eNonLin()
-                x = np.arange(4000)
-                y = fitPolyBkwd(coefs,x)
-                ph = np.interp(lines.realE,y,x)
-                if doPlot: 
-                    mpl.errorbar(lines.fitE-ph,lines.realE,
-                                 xerr=lines.fitEErr,fmt='o')
-                    mpl.ylabel('Energy (eV)')
-                    mpl.xlabel('Delta E (eV)')
-                    mpl.title('Pixel %d' % p)
-                    mpl.axvline(0)
-                    mpl.show(block=True)
-                if np.any(coefs):
-                    pxlPls['lin'] = coefs[0]/pxlPls['gain']
-                    pxlPls['quad'] = coefs[1]/np.square(pxlPls['gain'])
-                    pxlPls['energy'] = (pxlPls['lin']*pxlPls['ph']
-                                        +pxlPls['quad']*np.square(pxlPls['ph']))
-                    self.setPixelPulses(p,pxlPls)
-                else: 
-                    print "Unable To Fit Non-Linearities For Pixel %d" % p
-    def eScale(self):
+            railTime = (-1*np.inf,np.inf)
+            skyTime = (0,0)
+            chuteTime = (0,0)
+        for p in self.pixels():
+            pxlPls = self.pixelPulses(p)
+            railPxlPls = pxlPls[((pxlPls['time']>railTime[0])
+                                 &(pxlPls['time']<railTime[1])
+                                 &(pxlPls['resolution']==0))]
+            lines = spectralLines(railPxlPls['ph']/railPxlPls['gain'])
+            coefs = lines.eNonLin(order=order)
+            modelE = fitPolyBkwd(coefs,lines.fitE)
+            error = lines.realE - modelE
+            if np.any(np.abs(error)>2):
+                print "Bad Pixel: %d" % p
+            if doPlot: 
+                mpl.errorbar(error,lines.realE,
+                             xerr=lines.fitEErr,fmt='o')
+            if np.any(coefs):
+                pxlPls['energy'] = fitPolyBkwd(coefs,pxlPls['ph']/pxlPls['gain'])
+                pxlPls['lin'] = coefs[0]
+                pxlPls['quad'] = coefs[1]
+                self.setPixelPulses(p,pxlPls)
+            else: 
+                print "Unable To Fit Non-Linearities For Pixel %d" % p
+        if doPlot:
+            mpl.ylabel('Energy (eV)')
+            mpl.xlabel('Delta E (eV)')
+            mpl.title('Pixel %d' % p)
+            mpl.axvline(0)
+            mpl.show(block=True)
+            railPls = self.pulses()[((self.pulses()['time']>railTime[0])
+                                     &(self.pulses()['time']<railTime[1])
+                                     &(self.pulses()['resolution']==0))]
+            skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
+                                     &(self.pulses()['time']<skyTime[1])
+                                     &(self.pulses()['resolution']==0))]
+            chutePls = self.pulses()[((self.pulses()['time']>chuteTime[0])
+                                     &(self.pulses()['time']<chuteTime[1])
+                                     &(self.pulses()['resolution']==0))]
+            mpl.hist(railPls['energy'],range=(0,4000),
+                     bins=1600,normed=True,histtype='step')
+            mpl.hist(chutePls['energy'],range=(0,4000),
+                     bins=1600,normed=True,histtype='step')
+            mpl.hist(skyPls['energy'],range=(0,4000),
+                     bins=1600,normed=True,histtype='step')
+            mpl.show(block=True)
+    def eScale(self,order=2,doPlot=False):
         self.gainDrift()
-        self.nonLin()
+        self.nonLin(order=order,doPlot=doPlot)
         self.writeEvents()
     def selectEvents(self,doPlot=True):
         if self.run=='k8r61':
@@ -905,35 +886,42 @@ class allPixels(object):
             effArea = 0
             skyTime = (185.,436.) # T-time of observation
             exposure = skyTime[1]-skyTime[0]
-            #badPixels = np.array([9,18,28,32,33],dtype=int)
-            badPixels = np.array([7,8,17,18,19,24,26,29,31,35],dtype=int) # bad escales
-            goodPixels = np.setdiff1d(self.pixels(),badPixels)
-            skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
-                                    &(self.pulses()['time']<skyTime[1]))]
-            goodPls = np.array([],dtype=skyPls.dtype)
-            rsltns = []
-            skyPls.sort(order='time')
-            rates = fitStats(skyPls['time'])
-            lmdaTot = np.sum(rates)
-            pxlSep = np.diff(skyPls['time'])
-            prePxlSep = np.append(np.inf,pxlSep)
-            pstPxlSep = np.append(pxlSep,np.inf)
-            minPxlSep = np.minimum(prePxlSep,pstPxlSep)
-            eff2 = (1.-sts.gamma.cdf(dt2,a=1,scale=1./lmdaTot))**2
-            for p in goodPixels:
-                pxlObj = singlePixel(self.run,p)
-                pxlObj.loadFromHdf('bsn')
-                effTot = eff2*pxlObj.liveTimePercentage(skyTime)
-                effArea += effTot*fov*pxlArea
-                pxlPls = skyPls[((skyPls['pixel']==p)&(minPxlSep>dt2)
-                                 &(skyPls['resolution']==0))]
-                rsltn = pxlObj.bslnRes()
-                rsltns.append(rsltn*len(pxlPls)) # terms of weighted sum
-                goodPls = np.append(goodPls,pxlPls)
-            netRsltn = np.sum(rsltns)/len(goodPls) # weighted average
-            obsObj = observation(self.run)
-            obsObj.setEvents(goodPls,effArea,exposure,netRsltn)
-            return obsObj
+            badPixels = np.array([7,8,17,18,19,24,26,29,31,35],dtype=int)
+        elif self.run=='j5r62':
+            dt2 = 0.001
+            fov = 0.809259 # cosine weighted 30.5 degree radius fov in sr
+            pxlArea = .04 # area of one pixel in cm^2
+            effArea = 0
+            skyTime = (155.,436.) # T-time of observation
+            exposure = skyTime[1]-skyTime[0]
+            badPixels = np.array([4,5,7,18,19,25],dtype=int)
+        goodPixels = np.setdiff1d(self.pixels(),badPixels)
+        skyPls = self.pulses()[((self.pulses()['time']>skyTime[0])
+                                &(self.pulses()['time']<skyTime[1]))]
+        goodPls = np.array([],dtype=skyPls.dtype)
+        rsltns = []
+        skyPls.sort(order='time')
+        rates = fitStats(skyPls['time'])
+        lmdaTot = np.sum(rates)
+        pxlSep = np.diff(skyPls['time'])
+        prePxlSep = np.append(np.inf,pxlSep)
+        pstPxlSep = np.append(pxlSep,np.inf)
+        minPxlSep = np.minimum(prePxlSep,pstPxlSep)
+        eff2 = (1.-sts.gamma.cdf(dt2,a=1,scale=1./lmdaTot))**2
+        for p in goodPixels:
+            pxlObj = singlePixel(self.run,p)
+            pxlObj.loadFromHdf('bsn')
+            effTot = eff2*pxlObj.liveTimePercentage(skyTime)
+            effArea += effTot*fov*pxlArea
+            pxlPls = skyPls[((skyPls['pixel']==p)&(minPxlSep>dt2)
+                             &(skyPls['resolution']==0))]
+            rsltn = pxlObj.bslnRes()
+            rsltns.append(rsltn*len(pxlPls)) # terms of weighted sum
+            goodPls = np.append(goodPls,pxlPls)
+        netRsltn = np.sum(rsltns)/len(goodPls) # weighted average
+        obsObj = observation(self.run)
+        obsObj.setEvents(goodPls,effArea,exposure,netRsltn)
+        return obsObj
                 
 class observation(object):
     def __init__(self,run):
@@ -983,12 +971,20 @@ class observation(object):
         detEff = self.gendet(energies)
         np.savetxt(outFile,np.transpose([.001*energies,detEff]),fmt='%.6f')
         return outFile
+    def genice(self,energies):
+        t,f = np.loadtxt("data/%s_ice.dat" % self.run)
+        iceTable = np.loadtxt('data/length/O.len')
+        iceRo = 1.
+        iceAt = (10**4)*np.interp(energies,iceTable[:,0],iceTable[:,1])/iceRo
+        absorb = 1.-np.exp(-1.*t/iceAt)
+        trans = 1.-f*absorb
+        return trans
     def genrsp(self,chan_low,chan_high,chan_number,baseName,filfil='none',
                efffil='none',detfil='none',realFWHM=False):
         fwhm = 0.001*self._rsltn
         resp_low = max(.001,round(chan_low-fwhm,3))
         resp_high = round(chan_high+fwhm,3)
-        resp_number = int(1000*(resp_high-resp_low)) # 1 eV bins
+        resp_number = int(500*(resp_high-resp_low)) # 2 eV bins
         if not realFWHM:
             # use large number to ensure matrix is correct 
             # shape for modifying later
@@ -997,8 +993,10 @@ class observation(object):
         tlscpe = "XQC"
         if self.run=='k8r61':
             instrm = "XQC6"
+        if self.run=='j5r62':
+            instrm = "XQC5"
         rsp_min = 1e-6
-        max_elements = 10000000
+        max_elements = 20000000
         tmplt = open('genrsp.tmplt','r')
         lines = tmplt.readlines()
         cmd = lines[-1]
@@ -1024,7 +1022,12 @@ class observation(object):
         subT = np.interp(energies,sbstrt[0],sbstrt[1])
         mush = (absT*(1.-subT) + (1.-absT)*eEscape)/((1.-absT)*(1.-eEscape))
         return mush
-    def modrsp(self,rspfil):
+    def thruput(self,energies,ice=False):
+        AW = self._effArea*self.genfil(energies)*self.gendet(energies)
+        if ice:
+            AW = self.genice(energies)*AW
+        return AW
+    def modrsp(self,rspfil,ice=False):
         f = fits.open(rspfil,mode='update')
         eboundsHDU = f["EBOUNDS"]
         chanEMin = eboundsHDU.data["E_MIN"]
@@ -1040,22 +1043,24 @@ class observation(object):
         modE = rspEMin + 0.5*(rspEMax-rspEMin)
         fwhm = 0.001*self._rsltn
         rsp_min = rspHDU.header["LO_THRES"]
-        filTrans = self.genfil(1000*modE)
-        detEff = self.gendet(1000*modE)
+        thruput =  self.thruput(1000*modE,ice=ice)
         mush = self.mushFraction(1000*modE)
         for r in range(rspLen):
             e = modE[r]
-            thruput =  self._effArea*filTrans[r]*detEff[r]
             chanStart = firstChan[r]-1 # python counts from 0, not 1
             chanStop = chanStart + chanLen
             channels =  np.arange(chanStart,chanStop,dtype='int32')
             nSteps = 10
             dE = np.arange(nSteps+1)*chanEWidth[channels].reshape(-1,1)/nSteps
             chanE = chanEMin[channels].reshape(-1,1) + dE
-            chanRsp = thruput*xqcRsp(chanE,e,fwhm,mush[r])
+            chanRsp = thruput[r]*xqcRsp(chanE,e,fwhm,mush[r])
             row = np.trapz(chanRsp,chanE)
             matrix[r] = row
-            numChan[r] = np.where(row>rsp_min)[0][-1]+1
+            goodElements = np.where(row>rsp_min)[0]
+            if len(goodElements)>0:
+                numChan[r] = goodElements[-1]+1
+            else:
+                numChan[r] = 0
         rspHDU.data["MATRIX"] = matrix
         rspHDU.data["F_CHAN"] = firstChan
         rspHDU.data["N_CHAN"] = numChan
@@ -1069,6 +1074,9 @@ class observation(object):
         if self.run=='k8r61':
             instrume = "XQC6"
             detnam = "XQC6"
+        if self.run=='j5r62':
+            instrume = "XQC5"
+            detnam = "XQC5"
         exposure = self._exposure
         tmplt = open('genpha.tmplt','r')
         lines = tmplt.readlines()
@@ -1078,25 +1086,22 @@ class observation(object):
         subprocess.call((cmd % tpl).split())
         subprocess.call(["rm", infile])
         return outfile
-    def spectrum(self,eRange,binSize,fileNameAdd=""): # create xspec files
+    def spectrum(self,eRange,binSize,ice=False,fileNameAdd=""): # create xspec files
         baseName = "%s"% self.run
         if fileNameAdd!="":
             baseName += "_%s" % fileNameAdd
         chan_number = int((eRange[1]-eRange[0])//binSize)
         hy,hx = np.histogram(self._events['energy'],range=eRange,
                              bins=chan_number)   
+        eLo = .001*hx[:-1]
+        eHi = .001*hx[1:]
+        cts = hy
+        thru = self.thruput(hx[:-1]+0.5*np.diff(hx),ice=ice)
+        np.savetxt("%s_spectrum.dat" % baseName,np.transpose([eLo,eHi,cts,thru]))
         chan_low = 0.001*hx[0] # convert to keV
         chan_high = 0.001*hx[-1]
-        #filfil = self.writeFilfil(hx)
-        #efffil = self.writeEfffil(hx)
-        #detfil = self.writeDetfil(hx)
-        #rsp = self.genrsp(chan_low,chan_high,chan_number,baseName,
-        #                  filfil=filfil,efffil=efffil,realFWHM=True)
-        #subprocess.call(["rm", filfil])
-        #subprocess.call(["rm", efffil])
-        #subprocess.call(["rm", detfil])
         rsp = self.genrsp(chan_low,chan_high,chan_number,baseName)  
-        self.modrsp(rsp)
+        self.modrsp(rsp,ice=ice)
         pha = self.genpha(hy,baseName,rspfil="%s.rsp" % baseName)
         return pha
  
@@ -1106,9 +1111,9 @@ class spectralLines(object):
         self.binWidth = 2.
         self.maxE = 4000.
         #self.gl = {'B':183.3, 'C':277.0, 'N':392.4, 'O':524.9, 'F':676.8, 
-        #           'Ka':3313.8, 'Kb':3589.6}  
+        #           'Al':1486.7,'Ka':3313.8, 'Kb':3589.6}  
         #self.gl = {'C':277.0,'O':524.9,'Ka':3313.8}    
-        self.gl = {'Al':1486.6,'Ka':3313.8}   
+        self.gl = {'F':676.8,'Si':1740,'Ka':3313.8}   
         self.realE = np.array([])
         self.fitE = np.array([])
         self.fitEErr = np.array([])
@@ -1685,19 +1690,7 @@ class singlePixel(object):
                 msg += "%d Seconds Remaining" % (int((t2-t1)/fc-(t2-t1)))
                 print msg
                 printWhen += 1
-        print  "%.1f%% Total Deadtime"% self.deadTime()
-    def nonLinGain(self):
-        pulseHeights = self._pulses['ph']
-        lines = spectralLines(pulseHeights)  
-        coefs = lines.eNonLin()
-        if np.any(coefs):
-            self._pulses['lin'] = coefs[0]
-            self._pulses['quad'] = coefs[1]
-            self._pulses['energy'] = (self._pulses['lin']*self._pulses['ph']
-                                  + self._pulses['quad']*np.square(self._pulses['ph']))
-            print "Non-Linear Gain Correction Applied"
-        else: 
-            print "Unable To Fit Non-Linearities"        
+        print  "%.1f%% Total Deadtime"% self.deadTime()    
             
 class IRFilter(object):
     def __init__(self):
